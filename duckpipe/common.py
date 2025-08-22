@@ -5,7 +5,7 @@ This module defines reference CRS, database/schema names, standardized column na
 for outputs, multiprocessing sentinels, and tqdm display settings used by calculators.
 """
 REF_EPSG = 5179
-DB_NAME = "dbdb"
+DB_NAME = "main"
 
 YEAR_COL = "year"
 VAR_COL = "stat_alias"

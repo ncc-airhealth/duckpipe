@@ -16,11 +16,11 @@ from duckpipe.duckdb_utils import generate_duckdb_connection, install_duckdb_ext
 
 
 class Calculator(Clustering,
-                            LanduseCalculator, 
-                            AirportDistanceCalculator, 
-                            CoastlineDistanceCalculator, 
-                            RelativeElevationCalculator, 
-                            ):
+                 LanduseCalculator, 
+                 AirportDistanceCalculator, 
+                 CoastlineDistanceCalculator, 
+                 RelativeElevationCalculator, 
+                 ):
     """
     [description]
     High-level orchestrator that composes all calculator mixins to compute geospatial variables

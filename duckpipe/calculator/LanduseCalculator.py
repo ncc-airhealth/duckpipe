@@ -30,20 +30,55 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
     """)
     # query landuse subset
     max_buffer_size = max(buffer_sizes)
+    # conn.execute(f"""
+    # CREATE OR REPLACE TEMP TABLE aoi_landuse AS (
+    #     WITH 
+    #     aoi_bbox AS (
+    #         SELECT ST_Envelope(ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size})) AS geometry
+    #         FROM chunk
+    #     ), 
+    #     bbox_filtered AS (
+    #         SELECT 
+    #             t.geometry
+    #             , t.code
+    #             , ST_Intersection(t.geometry, a.geometry) AS geometry
+    #         FROM aoi_bbox AS a
+    #         INNER JOIN {table} AS t ON ST_Intersects_Extent(t.geometry, a.geometry)
+    #     )
+    #     SELECT * 
+    #     FROM bbox_filtered
+    #     WHERE NOT ST_IsEmpty(geometry)
+    # );
+    # CREATE INDEX rtree_temp ON aoi_landuse
+    # USING RTREE (geometry) WITH (max_node_capacity = 4);
+    # """)
     conn.execute(f"""
-    CREATE OR REPLACE TEMP TABLE aoi_landuse AS (
-        WITH aoi AS (
-            SELECT ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size}) AS geometry
-            FROM chunk
-        )
-        SELECT 
-            t.* EXCLUDE (geometry)
-            , ST_Intersection(t.geometry, a.geometry) AS geometry
-        FROM {table} AS t INNER JOIN aoi AS a ON ST_Intersects(t.geometry, a.geometry)
+    CREATE OR REPLACE TEMP TABLE aoi_box AS (
+        SELECT ST_Envelope(ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size})) AS bbox 
+        FROM chunk 
+    )""")
+    sql = f"""
+    --CREATE OR REPLACE TEMP TABLE aoi_landuse AS 
+    EXPLAIN ANALYZE (
+        SELECT
+            t.code 
+            , t.geometry
+            --, ST_Intersection(t.geometry, a.bbox) AS geometry
+        FROM aoi_box AS a
+        INNER JOIN {table} AS t ON
+            ST_Intersects(t.geometry, a.bbox) -- bbox filter 3x faster than ST_Intersects with 300MB ram usage added
+            --t.bbox.xmin < ST_XMax(a.bbox) AND 
+            --t.bbox.xmax > ST_XMin(a.bbox) AND 
+            --t.bbox.ymin < ST_YMax(a.bbox) AND 
+            --t.bbox.ymax > ST_YMin(a.bbox)
     );
-    CREATE INDEX rtree_temp ON aoi_landuse
-    USING RTREE (geometry) WITH (max_node_capacity = 4);
-    """)
+    --CREATE INDEX rtree_temp ON aoi_landuse
+    --USING RTREE (geometry) WITH (max_node_capacity = 4);
+    """
+    # conn.execute(sql)
+    print(conn.execute(sql).df().to_dict())
+    raise Exception("break")
+    return pd.DataFrame()
     # value
     conn.register('buffer_size', pd.DataFrame({"buffer_size": buffer_sizes}))
     result = conn.execute(f"""
@@ -100,6 +135,7 @@ def landuse_area_ratio_worker(task_queue,
                               buffer_sizes: list[float],
                               memory_limit: str):
     conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
+    # conn.execute(f"ANALYZE landuse_{year};")
     try:
         while True:
             try:

@@ -22,6 +22,7 @@ def query_relative_elevation_chunk(chunk: pd.DataFrame,
                                    buffer_sizes: list[float], 
                                    conn: DuckDBPyConnection
                                    ) -> pd.DataFrame:
+    # prepare
     var_prefix = VALID_TABLE_VAR_NAME[table]
     # generate chunk table
     conn.register('chunk_wkt', chunk)
@@ -150,7 +151,7 @@ def relative_elevation_worker(task_queue,
     return
 
 class RelativeElevationCalculator:
-    
+
     @typechecked
     def calculate_relative_elevation(self, 
                                      elevation_types: str | list[str], 
