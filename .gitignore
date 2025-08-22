@@ -1,0 +1,6 @@
+uv.lock
+*__pycache__
+.env
+test/local_example.py
+*.DS_Store
+.venv
