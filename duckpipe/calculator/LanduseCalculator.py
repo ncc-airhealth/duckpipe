@@ -60,12 +60,9 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
     sql = f"""
     --CREATE OR REPLACE TEMP TABLE aoi_landuse AS 
     EXPLAIN ANALYZE (
-        SELECT
-            t.code 
-            , t.geometry
-            --, ST_Intersection(t.geometry, a.bbox) AS geometry
-        FROM aoi_box AS a
-        INNER JOIN {table} AS t ON
+        SELECT t.*
+        FROM {table} AS t, aoi_box AS a
+        WHERE
             ST_Intersects(t.geometry, a.bbox) -- bbox filter 3x faster than ST_Intersects with 300MB ram usage added
             --t.bbox.xmin < ST_XMax(a.bbox) AND 
             --t.bbox.xmax > ST_XMin(a.bbox) AND 
