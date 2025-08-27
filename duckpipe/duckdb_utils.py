@@ -55,11 +55,9 @@ def generate_duckdb_connection(db_path: str, memory_limit: str="6GB") -> DuckDBP
     conn.close()
     ```
     """
-    conn = duckdb.connect()
+    conn = duckdb.connect(database=db_path, read_only=True)
     conn.execute("PRAGMA threads=1") # geospatial processing better when single threaded
     conn.execute("LOAD spatial")
     conn.execute(f"SET memory_limit='{memory_limit}'")
     conn.execute("SET enable_progress_bar = false")
-    conn.execute(f"ATTACH '{db_path}' AS {DB_NAME} (READ_ONLY)")
-    conn.execute(f"USE {DB_NAME}")
     return conn

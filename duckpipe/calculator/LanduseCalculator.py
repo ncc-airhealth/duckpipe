@@ -28,23 +28,36 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
         FROM chunk_wkt
     )
     """)
-    # query landuse subset
+    # define aoi bbox
+    # by duckdb optimizer error, bbox filter is faster than ST_Intersects
+    # if using aoi birectly in query, memory usage goes up to 9GB per worker
+    # full table-scanning for every iteration (checked by EXPLAIN ANALYZE)
     max_buffer_size = max(buffer_sizes)
+    sql = f"""
+    WITH aoi AS ( 
+        SELECT ST_Envelope(ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size})) AS aoi 
+        FROM chunk 
+    )
+    SELECT ST_XMin(aoi), ST_YMin(aoi), ST_XMax(aoi), ST_YMax(aoi), ST_AsText(aoi)
+    FROM aoi
+    """
+    xmin, ymin, xmax, ymax, aoi_wkt = conn.execute(sql).fetchone()
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE aoi_landuse AS (
-        WITH aoi AS (
-            SELECT ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size}) AS geometry
-            FROM chunk
-        )
         SELECT 
-            t.* EXCLUDE (geometry)
-            , ST_Intersection(t.geometry, a.geometry) AS geometry
-        FROM {table} AS t INNER JOIN aoi AS a ON ST_Intersects(t.geometry, a.geometry)
+            ST_Intersection(geometry, ST_GeomFromText('{aoi_wkt}')) AS geometry,
+            code
+        FROM {table}
+        WHERE 
+            bbox.xmin < {xmax} AND 
+            bbox.xmax > {xmin} AND 
+            bbox.ymin < {ymax} AND 
+            bbox.ymax > {ymin}
     );
-    CREATE INDEX rtree_temp ON aoi_landuse
+    CREATE INDEX rtree_aoi_landuse ON aoi_landuse
     USING RTREE (geometry) WITH (max_node_capacity = 4);
     """)
-    # value
+    # main query
     conn.register('buffer_size', pd.DataFrame({"buffer_size": buffer_sizes}))
     result = conn.execute(f"""
     WITH 
@@ -83,7 +96,7 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
     FROM renamed
     """).df()
     # clear temporary table
-    conn.execute("DROP INDEX rtree_temp")
+    conn.execute("DROP INDEX IF EXISTS rtree_aoi_landuse")
     conn.execute("DROP TABLE IF EXISTS chunk")
     conn.execute("DROP TABLE IF EXISTS aoi")
     conn.execute("DROP TABLE IF EXISTS aoi_landuse")
@@ -100,6 +113,7 @@ def landuse_area_ratio_worker(task_queue,
                               buffer_sizes: list[float],
                               memory_limit: str):
     conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
+    # conn.execute(f"ANALYZE landuse_{year};")
     try:
         while True:
             try:
