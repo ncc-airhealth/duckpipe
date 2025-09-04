@@ -79,7 +79,6 @@ class CoordinateCalculator:
         SELECT * FROM coords
         """
         df = self.conn.execute(query).df()
-        raise Exception(df)
         self.conn.unregister('full_wkt')
         # done.
         self.result_df = pd.concat([self.result_df, df], ignore_index=True)
