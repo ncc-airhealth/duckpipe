@@ -43,28 +43,28 @@ class CoordinateCalculator:
             SELECT 
                 {C.ID_COL}, 
                 '{GCS_VAR_X}' AS {C.VAR_COL}, 
-                ST_X( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{GCS_EPSG}') ) AS {C.VAL_COL}
+                ST_Y( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{GCS_EPSG}') ) AS {C.VAL_COL}
             FROM raw_coords
         ),
         gcs_ycoords AS (
             SELECT 
                 {C.ID_COL}, 
                 '{GCS_VAR_Y}' AS {C.VAR_COL}, 
-                ST_Y( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{GCS_EPSG}') ) AS {C.VAL_COL}
+                ST_X( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{GCS_EPSG}') ) AS {C.VAL_COL}
             FROM raw_coords
         ),
         pcs_xcoords AS (
             SELECT 
                 {C.ID_COL}, 
                 '{PCS_VAR_X}' AS {C.VAR_COL}, 
-                ST_X( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{PCS_EPSG}') ) AS {C.VAL_COL}
+                ST_Y( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{PCS_EPSG}') ) AS {C.VAL_COL}
             FROM raw_coords
         ), 
         pcs_ycoords AS (
             SELECT 
                 {C.ID_COL}, 
                 '{PCS_VAR_Y}' AS {C.VAR_COL}, 
-                ST_Y( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{PCS_EPSG}') ) AS {C.VAL_COL}
+                ST_X( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{PCS_EPSG}') ) AS {C.VAL_COL}
             FROM raw_coords
         ),
         coords AS (
@@ -79,6 +79,7 @@ class CoordinateCalculator:
         SELECT * FROM coords
         """
         df = self.conn.execute(query).df()
+        raise Exception(df)
         self.conn.unregister('full_wkt')
         # done.
         self.result_df = pd.concat([self.result_df, df], ignore_index=True)
