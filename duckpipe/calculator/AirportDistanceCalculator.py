@@ -11,7 +11,7 @@ from duckpipe.duckdb_utils import generate_duckdb_connection
 
 VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
 TABLE_NAME = "airport"
-VAR_PREFIX = "d_airport"
+VAR_PREFIX = "D_Airport"
 
 
 def query_airport_distance_chunk(chunk: pd.DataFrame,

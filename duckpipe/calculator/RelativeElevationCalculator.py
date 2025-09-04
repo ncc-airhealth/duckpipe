@@ -10,11 +10,11 @@ import duckpipe.common as C
 from duckpipe.duckdb_utils import generate_duckdb_connection
 
 VALID_TABLE_VAR_NAME = {
-    "dem": "alt_k", 
-    "dsm": "alt_a"
+    "dem": ("Alt_k", "Altitude_k"), 
+    "dsm": ("Alt_a", "Altitude_a")
 }
 DONUT_THICKNESS = 30
-DEM_SPATIAL_RESOLUTION = 30
+DEM_SPATIAL_RESOLUTION = 90
 
 
 def query_relative_elevation_chunk(chunk: pd.DataFrame,
@@ -23,95 +23,122 @@ def query_relative_elevation_chunk(chunk: pd.DataFrame,
                                    conn: DuckDBPyConnection
                                    ) -> pd.DataFrame:
     # prepare
-    var_prefix = VALID_TABLE_VAR_NAME[table]
+    rel_elev_prefix, ref_elev_prefix = VALID_TABLE_VAR_NAME[table]
     # generate chunk table
     conn.register('chunk_wkt', chunk)
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE chunk AS (
-        SELECT {C.ID_COL}, ST_GeomFromText(wkt) AS geometry
+        SELECT 
+            {C.ID_COL}, 
+            ST_GeomFromText(wkt) AS geometry
         FROM chunk_wkt
     )
     """)
     # query elevation subset
     max_buffer_size = max(buffer_sizes)
+    clip_distance = max_buffer_size + DONUT_THICKNESS + 2 * DEM_SPATIAL_RESOLUTION
+    query = f"""
+    SELECT 
+        MIN(ST_XMin(geometry)) - {clip_distance} AS xmin, 
+        MIN(ST_YMin(geometry)) - {clip_distance} AS ymin, 
+        MAX(ST_XMax(geometry)) + {clip_distance} AS xmax, 
+        MAX(ST_YMax(geometry)) + {clip_distance} AS ymax
+    FROM 
+        chunk
+    """
+    xmin, ymin, xmax, ymax = conn.execute(query).fetchone()
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE aoi_elevation AS (
-        WITH aoi AS (
-            SELECT ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size + DONUT_THICKNESS}) AS geometry
-            FROM chunk
-        )
         SELECT 
-            t.val AS val
-            , t.geometry AS geometry
+            val, 
+            geometry
         FROM 
-            {table} AS t 
-            INNER JOIN aoi AS a ON ST_Intersects(t.geometry, a.geometry)
+            {table}
+        WHERE 
+            (centroid_x < {xmax}) AND 
+            (centroid_x > {xmin}) AND 
+            (centroid_y < {ymax}) AND 
+            (centroid_y > {ymin})
     );
     CREATE INDEX rtree_temp ON aoi_elevation
-    USING RTREE (geometry) WITH (max_node_capacity = 4);
+    USING RTREE (geometry)
+    WITH (max_node_capacity = 4);
     """)
     # value
     conn.register('buffer_size', pd.DataFrame({"buffer_size": buffer_sizes}))
     result = conn.execute(f"""
     WITH 
-    -- reference elevation
     ref_elevation AS (
         SELECT 
-            c.{C.ID_COL} AS {C.ID_COL}
-            , MIN_BY(a.val, ST_Distance(c.geometry, a.geometry)) AS ref_val
+            c.{C.ID_COL} 
+            , MEAN(a.val) AS ref_val -- if point touches multiple pixels
         FROM 
             chunk AS c
-            INNER JOIN aoi_elevation AS a 
-                ON ST_DWithin(c.geometry, a.geometry, {DEM_SPATIAL_RESOLUTION})
-        GROUP BY c.{C.ID_COL}
+        LEFT JOIN 
+            aoi_elevation AS a 
+            ON ST_Intersects(c.geometry, a.geometry)
+        GROUP BY 
+            c.{C.ID_COL}
     )
-    -- donut ring
     , donut AS (
         SELECT 
-            {C.ID_COL}
-            , bs.buffer_size AS buffer_size
-            , ST_Difference(
-                ST_Buffer(geometry, bs.buffer_size + {DONUT_THICKNESS}), 
-                ST_Buffer(geometry, bs.buffer_size)
+            c.{C.ID_COL}, 
+            bs.buffer_size, 
+            re.ref_val, 
+            ST_Difference(
+                ST_Buffer(c.geometry, bs.buffer_size + {DONUT_THICKNESS}), 
+                ST_Buffer(c.geometry, bs.buffer_size)
             ) AS geometry
-        FROM chunk
-            CROSS JOIN buffer_size AS bs
-    )
-    -- elevation in donut ring 
-    , donut_elevation AS (
-        SELECT 
-            d.{C.ID_COL} AS {C.ID_COL}
-            , d.buffer_size AS buffer_size
-            , a.val AS elevation
         FROM 
-            donut AS d
-            LEFT JOIN aoi_elevation AS a ON ST_Within(a.geometry, d.geometry)
+            chunk AS c
+        CROSS JOIN 
+            buffer_size AS bs
+        INNER JOIN 
+            ref_elevation AS re 
+            ON c.{C.ID_COL} = re.{C.ID_COL}
     )
-    -- aggregate
-    , agg AS (
-        SELECT
-            {C.ID_COL}
-            , buffer_size
-            , AVG(CAST(elevation >= 20 AS INT)) AS above_20
-            , AVG(CAST(elevation <  20 AS INT)) AS below_20
-            , AVG(CAST(elevation >= 50 AS INT)) AS above_50
-            , AVG(CAST(elevation <  50 AS INT)) AS below_50
-        FROM donut_elevation
-        GROUP BY {C.ID_COL}, buffer_size
+    , rel_elevation_ratio AS (
+        SELECT 
+            d.{C.ID_COL}, 
+            d.buffer_size, 
+            AVG(CAST((a.val - d.ref_val) > +20 AS INT)) AS above_20,
+            AVG(CAST((a.val - d.ref_val) < -20 AS INT)) AS below_20,
+            AVG(CAST((a.val - d.ref_val) > +50 AS INT)) AS above_50,
+            AVG(CAST((a.val - d.ref_val) < -50 AS INT)) AS below_50
+        FROM 
+            aoi_elevation AS a
+        INNER JOIN 
+            donut AS d 
+            ON ST_Intersects(d.geometry, a.geometry)
+        GROUP BY 
+            d.{C.ID_COL}, 
+            d.buffer_size
     )
-    -- result
-    , melted AS (
+    , unpivoted AS (
         SELECT *
-        FROM agg
+        FROM rel_elevation_ratio
         UNPIVOT ( val FOR stat IN (above_20, below_20, above_50, below_50) )
     )
-    , result AS (
+    , result_rel_elev AS (
         SELECT 
-            {C.ID_COL}
-            , CONCAT( '{var_prefix}_', stat, '_', buffer_size ) AS {C.VAR_COL}
-            , NULL AS {C.YEAR_COL}
-            , val AS {C.VAL_COL}
-        FROM melted
+            {C.ID_COL}, 
+            CONCAT( '{rel_elev_prefix}_', stat, '_', buffer_size::VARCHAR ) AS {C.VAR_COL}, 
+            NULL AS {C.YEAR_COL}, 
+            val AS {C.VAL_COL}
+        FROM unpivoted
+    )
+    , result_ref_elev AS (
+        SELECT 
+            {C.ID_COL}, 
+            '{ref_elev_prefix}' AS {C.VAR_COL}, 
+            NULL AS {C.YEAR_COL}, 
+            ref_val AS {C.VAL_COL}
+        FROM ref_elevation
+    )
+    , result AS (
+        SELECT * FROM result_rel_elev
+        UNION ALL
+        SELECT * FROM result_ref_elev
     )
     SELECT * FROM result
     """).df()
@@ -122,6 +149,7 @@ def query_relative_elevation_chunk(chunk: pd.DataFrame,
     conn.execute("DROP TABLE IF EXISTS aoi_elevation")
     conn.unregister('chunk_wkt')
     conn.unregister('buffer_size')
+    # done
     return result
 
 
