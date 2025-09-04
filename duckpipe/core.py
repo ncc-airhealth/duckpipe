@@ -6,6 +6,7 @@ from datetime import datetime
 
 import duckpipe.common as C
 from duckpipe.calculator.Clustering import Clustering
+from duckpipe.calculator.CoordinateCalculator import CoordinateCalculator
 from duckpipe.calculator.LanduseCalculator import LanduseCalculator
 from duckpipe.calculator.AirportDistanceCalculator import AirportDistanceCalculator
 from duckpipe.calculator.CoastlineDistanceCalculator import CoastlineDistanceCalculator
@@ -16,6 +17,7 @@ from duckpipe.duckdb_utils import generate_duckdb_connection, install_duckdb_ext
 
 
 class Calculator(Clustering,
+                 CoordinateCalculator, 
                  LanduseCalculator, 
                  AirportDistanceCalculator, 
                  CoastlineDistanceCalculator, 
@@ -99,13 +101,9 @@ class Calculator(Clustering,
         self.gdf[C.ID_COL] = [str(i) for i in range(len(self.gdf))]
         self.geom_df = self.gdf.loc[:, [C.ID_COL, self.geom_col]]
         self.geom_df[self.geom_col] = self.geom_df[self.geom_col].to_crs(C.REF_EPSG)
+        # wkt, for duckdb compatibility
         self.geom_df = (
             self.geom_df
-            # hilbert distance based sorting, for chunked processing
-            .assign(hilbert_distance=lambda df: df.geometry.hilbert_distance())
-            .sort_values(by="hilbert_distance")
-            .drop(columns=["hilbert_distance"])
-            # wkt, for duckdb compatibility
             .assign(wkt=lambda df: df[self.geom_col].apply(lambda g: g.wkt))
             .drop(columns=[self.geom_col])
         )

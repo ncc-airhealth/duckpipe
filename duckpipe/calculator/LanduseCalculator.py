@@ -10,7 +10,7 @@ import duckpipe.common as C
 from duckpipe.duckdb_utils import generate_duckdb_connection
 
 VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
-VAR_PREFIX = "lu"
+VAR_PREFIX = "LS"
 
 
 def query_landuse_area_ratio(chunk: pd.DataFrame,
@@ -30,7 +30,7 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
     """)
     # define aoi bbox
     # by duckdb optimizer error, bbox filter is faster than ST_Intersects
-    # if using aoi birectly in query, memory usage goes up to 9GB per worker
+    # if using aoi directly in query, memory usage goes up to 9GB per worker
     # full table-scanning for every iteration (checked by EXPLAIN ANALYZE)
     max_buffer_size = max(buffer_sizes)
     sql = f"""
@@ -73,8 +73,8 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
             a.{C.ID_COL} AS {C.ID_COL}
             , a.buffer_size AS buffer_size
             , CAST(l.code AS VARCHAR) AS lu_code
-            , SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) ) AS area
-            , SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) / ST_Area(a.geometry) ) AS ratio
+            , SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) ) AS a
+            , SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) / ST_Area(a.geometry) ) AS p
         FROM 
             aoi_landuse AS l INNER JOIN aoi AS a ON ST_Intersects(l.geometry, a.geometry)
         GROUP BY a.{C.ID_COL}, a.buffer_size, l.code
@@ -82,12 +82,16 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
     , unpivoted AS (
         SELECT *
         FROM aggregated
-        UNPIVOT ( val FOR stat_type IN (area, ratio) )
+        UNPIVOT ( val FOR stat_type IN (a, p) )
     )
     , renamed AS (
         SELECT 
             {C.ID_COL}
-            , CONCAT( 'lu_', stat_type, '_', lu_code, '_', buffer_size ) AS {C.VAR_COL}
+            , CONCAT( 
+                '{VAR_PREFIX}', lu_code, '_', 
+                LPAD(buffer_size::VARCHAR, 4, '0'), '_', 
+                stat_type 
+            ) AS {C.VAR_COL}
             , {year} AS {C.YEAR_COL}
             , val AS {C.VAL_COL}
         FROM unpivoted
