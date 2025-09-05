@@ -1,6 +1,7 @@
 import duckdb
 from duckdb import DuckDBPyConnection
 from typeguard import typechecked
+from pathlib import Path
 from duckpipe.common import *
 
 
@@ -33,7 +34,16 @@ def install_duckdb_extensions():
     return
 
 @typechecked
-def generate_duckdb_connection(db_path: str, memory_limit: str="6GB") -> DuckDBPyConnection:
+def generate_duckdb_memory_connection(memory_limit: str="6GB") -> DuckDBPyConnection:
+    conn = duckdb.connect(":memory:")
+    conn.execute("PRAGMA threads=1") # geospatial processing better when single threaded
+    conn.execute("LOAD spatial")
+    conn.execute(f"SET memory_limit='{memory_limit}'")
+    conn.execute("SET enable_progress_bar = false")
+    return conn
+
+@typechecked
+def generate_duckdb_connection(db_path: str | Path, memory_limit: str="6GB") -> DuckDBPyConnection:
     """
     [description]
     Create a new DuckDB connection, configure it for geospatial workloads, attach the database

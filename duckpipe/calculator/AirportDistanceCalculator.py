@@ -5,9 +5,10 @@ from typeguard import typechecked
 from typing import Self
 from duckdb import DuckDBPyConnection
 from tqdm import tqdm
+from pathlib import Path
 
 import duckpipe.common as C
-from duckpipe.duckdb_utils import generate_duckdb_connection
+from duckpipe.duckdb_utils import generate_duckdb_connection, generate_duckdb_memory_connection
 
 VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
 TABLE_NAME = "airport"
@@ -16,6 +17,7 @@ VAR_PREFIX = "D_Airport"
 
 def query_airport_distance_chunk(chunk: pd.DataFrame,
                                  year: int,
+                                 table_path: str | Path,
                                  conn: DuckDBPyConnection) -> pd.DataFrame:
     # register chunk geometries
     conn.register('chunk_wkt', chunk)
@@ -33,7 +35,7 @@ def query_airport_distance_chunk(chunk: pd.DataFrame,
         , {year} AS {C.YEAR_COL}
         , MIN(ST_Distance(a.geometry, c.geometry)) AS {C.VAL_COL}
     FROM chunk AS c
-    CROSS JOIN {TABLE_NAME} AS a
+    CROSS JOIN '{table_path}' AS a
     WHERE a.year = {year}
     GROUP BY c.{C.ID_COL}
     """).df()
@@ -46,10 +48,10 @@ def query_airport_distance_chunk(chunk: pd.DataFrame,
 @typechecked
 def airport_distance_worker(task_queue, 
                             result_queue, 
-                            db_path: str,
                             year: int,
+                            table_path: str | Path,
                             memory_limit: str):
-    conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
+    conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
     try:
         while True:
             try:
@@ -58,7 +60,8 @@ def airport_distance_worker(task_queue,
                     result_queue.put(C.SENTINEL)
                     break
                 chunk = task  # pandas DataFrame with [ID_COL, wkt]
-                result = query_airport_distance_chunk(chunk, year, conn)
+                table_path = table_path
+                result = query_airport_distance_chunk(chunk, year, table_path, conn)
                 result_queue.put((len(chunk), result))
             except queue.Empty:
                 continue
@@ -112,7 +115,8 @@ class AirportDistanceCalculator:
             result_queue = mp.Queue()
             workers = []
             for _ in range(self.n_workers):
-                args = (task_queue, result_queue, self.db_path, year, self.memory_limit)
+                table_path = (self.db_path / TABLE_NAME).with_suffix(f".parquet")
+                args = (task_queue, result_queue, year, table_path, self.memory_limit)
                 p = mp.Process(target=airport_distance_worker, args=args)
                 p.start()
                 workers.append(p)

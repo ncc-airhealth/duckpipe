@@ -3,6 +3,7 @@ import pandas as pd
 from typeguard import typechecked
 from typing import Self
 from datetime import datetime
+from pathlib import Path
 
 import duckpipe.common as C
 from duckpipe.calculator.Clustering import Clustering
@@ -11,7 +12,7 @@ from duckpipe.calculator.LanduseCalculator import LanduseCalculator
 from duckpipe.calculator.AirportDistanceCalculator import AirportDistanceCalculator
 from duckpipe.calculator.CoastlineDistanceCalculator import CoastlineDistanceCalculator
 from duckpipe.calculator.RelativeElevationCalculator import RelativeElevationCalculator
-from duckpipe.duckdb_utils import generate_duckdb_connection, install_duckdb_extensions
+from duckpipe.duckdb_utils import generate_duckdb_connection, install_duckdb_extensions, generate_duckdb_memory_connection
 
 
 
@@ -47,7 +48,7 @@ class Calculator(Clustering,
     ```
     """
     @typechecked
-    def __init__(self, db_path: str, n_workers: int=8, memory_limit: str="5GB", verbose=True):
+    def __init__(self, db_path: str | Path, n_workers: int=8, memory_limit: str="5GB", verbose=True):
         """
         [description]
         Initialize the Calculator with a DuckDB connection and runtime configuration.
@@ -70,9 +71,9 @@ class Calculator(Clustering,
         self.n_workers = n_workers
         self.memory_limit = memory_limit
         self.verbose = verbose
-        self.db_path = db_path
+        self.db_path = Path(db_path)
         install_duckdb_extensions()
-        self.conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
+        self.conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
         self.start_time = datetime.now()
 
     @typechecked
