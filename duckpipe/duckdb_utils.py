@@ -35,6 +35,27 @@ def install_duckdb_extensions():
 
 @typechecked
 def generate_duckdb_memory_connection(memory_limit: str="6GB") -> DuckDBPyConnection:
+    """
+    [description]
+    Create an in-memory DuckDB connection configured for geospatial workloads
+    using the Spatial extension. This is the default connection type used by
+    calculator worker processes when scanning Parquet datasets directly.
+
+    [input]
+    - memory_limit: str — Memory limit string (e.g., "6GB") applied to DuckDB.
+
+    [output]
+    - duckdb.DuckDBPyConnection — In-memory connection with Spatial loaded, single-threaded
+      for more predictable geospatial performance, and progress bar disabled.
+
+    [example usage]
+    ```python
+    from duckpipe.duckdb_utils import generate_duckdb_memory_connection
+    conn = generate_duckdb_memory_connection(memory_limit="6GB")
+    # ... use conn ...
+    conn.close()
+    ```
+    """
     conn = duckdb.connect(":memory:")
     conn.execute("PRAGMA threads=1") # geospatial processing better when single threaded
     conn.execute("LOAD spatial")

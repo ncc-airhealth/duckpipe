@@ -1,3 +1,25 @@
+"""
+Land-use calculator (Parquet backend).
+
+This module computes land-use area and ratio statistics around input geometries
+for requested `years` and `buffer_sizes`, using multiprocessing with an
+in-memory DuckDB + Spatial connection. Land-use data is read from yearly
+Parquet files named like "landuse_{year}.parquet" stored under `self.db_path`.
+
+Expected Parquet schema (minimum):
+- geometry: polygon/multipolygon geometry compatible with DuckDB Spatial
+- code: land-use code (categorical or integer)
+- bbox or extent columns used for coarse prefiltering; either as struct fields
+  `bbox.xmin`, `bbox.xmax`, `bbox.ymin`, `bbox.ymax`, or equivalent flattened
+  columns (e.g., `xmin`, `xmax`, `ymin`, `ymax`).
+
+Public API:
+- `LanduseCalculator.calculate_landuse_area_ratio()`
+
+Internal helpers:
+- `query_landuse_area_ratio()` reads a chunk and returns stats for one year
+- `landuse_area_ratio_worker()` worker loop that processes chunks
+"""
 import pandas as pd
 import queue
 import multiprocessing as mp
@@ -5,9 +27,10 @@ from typeguard import typechecked
 from typing import Self
 from duckdb import DuckDBPyConnection
 from tqdm import tqdm
+from pathlib import Path
 
 import duckpipe.common as C
-from duckpipe.duckdb_utils import generate_duckdb_connection
+from duckpipe.duckdb_utils import generate_duckdb_memory_connection
 
 VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
 VAR_PREFIX = "LS"
@@ -16,10 +39,31 @@ VAR_PREFIX = "LS"
 def query_landuse_area_ratio(chunk: pd.DataFrame,
                              year: int,
                              buffer_sizes: list[float],
+                             table_path: str | Path,
                              conn: DuckDBPyConnection,
                              ) -> pd.DataFrame:
+    """
+    [description]
+    Compute land-use area (`a`) and proportion (`p`) within buffer rings around
+    each input geometry for a single `year`, scanning the Parquet dataset at
+    `table_path`.
+
+    [input]
+    - chunk: pandas.DataFrame — A chunk with columns [`C.ID_COL`, "wkt"].
+    - year: int — Target year, used to choose the Parquet file (`landuse_{year}.parquet`).
+    - buffer_sizes: list[float] — Buffer distances (meters) to compute.
+    - table_path: str | pathlib.Path — Path to the yearly land-use Parquet file.
+    - conn: duckdb.DuckDBPyConnection — In-memory DuckDB connection with Spatial loaded.
+
+    [output]
+    - pandas.DataFrame — Columns [`C.ID_COL`, `C.VAR_COL`, `C.YEAR_COL`, `C.VAL_COL`].
+
+    [notes]
+    - The function constructs an AOI via buffer of the chunk geometries for coarse prefiltering.
+    - It builds variable names like `LS{lu_code}_{buffer_size:04d}_{stat_type}` where stat_type is `a` or `p`.
+    """
     # prepare
-    table = f"landuse_{year}"
+    table_path = table_path
     # generate chunk table
     conn.register('chunk_wkt', chunk)
     conn.execute(f"""
@@ -47,12 +91,12 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
         SELECT 
             ST_Intersection(geometry, ST_GeomFromText('{aoi_wkt}')) AS geometry,
             code
-        FROM {table}
+        FROM '{table_path}'
         WHERE 
-            bbox.xmin < {xmax} AND 
-            bbox.xmax > {xmin} AND 
-            bbox.ymin < {ymax} AND 
-            bbox.ymax > {ymin}
+            xmin < {xmax} AND 
+            xmax > {xmin} AND 
+            ymin < {ymax} AND 
+            ymax > {ymin}
     );
     CREATE INDEX rtree_aoi_landuse ON aoi_landuse
     USING RTREE (geometry) WITH (max_node_capacity = 4);
@@ -112,12 +156,28 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
 @typechecked
 def landuse_area_ratio_worker(task_queue, 
                               result_queue, 
-                              db_path: str, 
                               year: int, 
                               buffer_sizes: list[float],
+                              table_path: str | Path,
                               memory_limit: str):
-    conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
-    # conn.execute(f"ANALYZE landuse_{year};")
+    """
+    [description]
+    Worker loop that pulls chunks from `task_queue` and computes land-use area/ratio
+    stats for the specified `year` and `buffer_sizes`, scanning the Parquet file at
+    `table_path`.
+
+    [input]
+    - task_queue: multiprocessing.Queue — Provides chunk DataFrames or sentinel.
+    - result_queue: multiprocessing.Queue — Receives `(chunk_len, result_df)` or sentinel.
+    - year: int — Target year.
+    - buffer_sizes: list[float] — Buffer distances (meters).
+    - table_path: str | pathlib.Path — Path to `landuse_{year}.parquet`.
+    - memory_limit: str — Passed to DuckDB memory connection.
+
+    [output]
+    - None — Side effects: places results on `result_queue` and a sentinel when done.
+    """
+    conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
     try:
         while True:
             try:
@@ -127,7 +187,7 @@ def landuse_area_ratio_worker(task_queue,
                         result_queue.put(C.SENTINEL)
                         break
                 chunk = task
-                res = query_landuse_area_ratio(chunk, year, buffer_sizes, conn)
+                res = query_landuse_area_ratio(chunk, year, buffer_sizes, table_path, conn)
                 result_queue.put((len(chunk), res))
             except queue.Empty:
                 continue
@@ -168,6 +228,11 @@ class LanduseCalculator:
             .get_result(pivot=True)
         )
         ```
+        
+        [notes]
+        - Data source: Parquet file per-year resolved as `(self.db_path / f"landuse_{year}").with_suffix(".parquet")`.
+        - Variable naming: `LS{lu_code}_{buffer_size:04d}_{stat}` where `stat` ∈ {`a`, `p`}.
+        - Results are appended to `self.result_df` in long format and can be pivoted via `get_result(pivot=True)`.
         """
         # input conversion
         if isinstance(years, int):
@@ -190,8 +255,9 @@ class LanduseCalculator:
             task_queue = mp.Queue()
             result_queue = mp.Queue()
             workers = []
+            table_path = (self.db_path / f"landuse_{year}").with_suffix(f".parquet")
             for _ in range(self.n_workers):
-                args = (task_queue, result_queue, self.db_path, year, buffer_sizes, self.memory_limit)
+                args = (task_queue, result_queue, year, buffer_sizes, table_path, self.memory_limit)
                 p = mp.Process(target=landuse_area_ratio_worker, args=args)
                 p.start()
                 workers.append(p)
@@ -221,4 +287,3 @@ class LanduseCalculator:
         df = pd.concat(results)    
         self.result_df = pd.concat([self.result_df, df], ignore_index=True)
         return self
-    

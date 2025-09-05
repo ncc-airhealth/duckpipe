@@ -1,3 +1,21 @@
+"""
+Coastline distance calculator (Parquet backend).
+
+This module computes per-feature minimum distance to the coastline for requested years
+using multiprocessing with an in-memory DuckDB + Spatial connection. Coastline data is
+read from a Parquet file named "coastline.parquet" located under `self.db_path`.
+
+Expected Parquet schema (minimum):
+- geometry: spatial geometry column compatible with DuckDB Spatial
+- year: integer year column used for filtering
+
+Public API:
+- `CoastlineDistanceCalculator.calculate_coastline_distance()`
+
+Internal helpers:
+- `query_coastline_distance_chunk()` reads a chunk and returns distances for one year
+- `coastline_distance_worker()` worker process that executes the chunk query repeatedly
+"""
 import pandas as pd
 import queue
 import multiprocessing as mp
@@ -5,9 +23,10 @@ from typeguard import typechecked
 from typing import Self
 from duckdb import DuckDBPyConnection
 from tqdm import tqdm
+from pathlib import Path
 
 import duckpipe.common as C
-from duckpipe.duckdb_utils import generate_duckdb_connection
+from duckpipe.duckdb_utils import generate_duckdb_memory_connection
 
 VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
 TABLE_NAME = "coastline"
@@ -15,7 +34,22 @@ VAR_PREFIX = "D_Coast"
 
 def query_coastline_distance_chunk(chunk: pd.DataFrame, 
                                    year: int, 
+                                   table_path: str | Path,
                                    conn: DuckDBPyConnection) -> pd.DataFrame:
+    """
+    [description]
+    Compute per-id minimum distance to the coastline for a given `year`, scanning the
+    Parquet dataset at `table_path`.
+
+    [input]
+    - chunk: pandas.DataFrame — A chunk with columns [`C.ID_COL`, "wkt"].
+    - year: int — Target year to filter the coastline features.
+    - table_path: str | pathlib.Path — Filesystem path to `coastline.parquet`.
+    - conn: duckdb.DuckDBPyConnection — In-memory DuckDB connection with Spatial loaded.
+
+    [output]
+    - pandas.DataFrame — Columns [`C.ID_COL`, `C.VAR_COL`, `C.YEAR_COL`, `C.VAL_COL`].
+    """
     # register chunk
     conn.register('chunk_wkt', chunk)
     conn.execute(f"""
@@ -32,7 +66,7 @@ def query_coastline_distance_chunk(chunk: pd.DataFrame,
         , {year} AS {C.YEAR_COL}
         , MIN(ST_Distance(t.geometry, c.geometry)) AS {C.VAL_COL}
     FROM chunk AS c
-    CROSS JOIN {TABLE_NAME} AS t
+    CROSS JOIN '{table_path}' AS t
     WHERE t.year = {year}
     GROUP BY c.{C.ID_COL}
     """).df()
@@ -45,10 +79,26 @@ def query_coastline_distance_chunk(chunk: pd.DataFrame,
 @typechecked
 def coastline_distance_worker(task_queue, 
                               result_queue, 
-                              db_path: str, 
                               year: int,
+                              table_path: str | Path,
                               memory_limit: str):
-    conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
+    """
+    [description]
+    Worker loop that pulls chunks from `task_queue`, computes coastline distance for
+    the specified `year` using the Parquet file at `table_path`, and pushes results
+    to `result_queue`.
+
+    [input]
+    - task_queue: multiprocessing.Queue — Provides chunk DataFrames or sentinel.
+    - result_queue: multiprocessing.Queue — Receives `(chunk_len, result_df)` or sentinel.
+    - year: int — Target year.
+    - table_path: str | pathlib.Path — Path to `coastline.parquet`.
+    - memory_limit: str — Passed to DuckDB memory connection.
+
+    [output]
+    - None — Side effects: places results on `result_queue` and a sentinel when done.
+    """
+    conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
     try:
         while True:
             try:
@@ -57,7 +107,7 @@ def coastline_distance_worker(task_queue,
                     result_queue.put(C.SENTINEL)
                     break
                 chunk = task
-                result = query_coastline_distance_chunk(chunk, year, conn)
+                result = query_coastline_distance_chunk(chunk, year, table_path, conn)
                 result_queue.put((len(chunk), result))
             except queue.Empty:
                 continue
@@ -93,6 +143,10 @@ class CoastlineDistanceCalculator:
             .get_result(pivot=True)
         )
         ```
+        
+        [notes]
+        - Data source: Parquet file resolved as `(self.db_path / "coastline").with_suffix(".parquet")`.
+        - Results are appended to `self.result_df` in long format and can be pivoted via `get_result(pivot=True)`.
         """
         # input conversion
         if isinstance(years, int):
@@ -110,8 +164,9 @@ class CoastlineDistanceCalculator:
             task_queue = mp.Queue()
             result_queue = mp.Queue()
             workers = []
+            table_path = (self.db_path / TABLE_NAME).with_suffix(f".parquet")
             for _ in range(self.n_workers):
-                args = (task_queue, result_queue, self.db_path, year, self.memory_limit)
+                args = (task_queue, result_queue, year, table_path, self.memory_limit)
                 p = mp.Process(target=coastline_distance_worker, args=args)
                 p.start()
                 workers.append(p)

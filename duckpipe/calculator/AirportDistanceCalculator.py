@@ -1,3 +1,22 @@
+"""
+Airport distance calculator (Parquet backend).
+
+Computes per-feature minimum distance to airports for requested years using
+multiprocessing with an in-memory DuckDB + Spatial connection. Airport data is
+read from a Parquet file named "airport.parquet" under `self.db_path`.
+
+Expected Parquet schema (minimum):
+- geometry: spatial geometry column compatible with DuckDB Spatial
+- year: integer year column used for filtering
+
+Public API:
+- `AirportDistanceCalculator.calculate_airport_distance()`
+
+Internal helpers:
+- `query_airport_distance_chunk()` reads a chunk and returns distances for one year
+- `airport_distance_worker()` worker loop that executes the chunk query repeatedly
+"""
+
 import pandas as pd
 import queue
 import multiprocessing as mp
@@ -19,6 +38,20 @@ def query_airport_distance_chunk(chunk: pd.DataFrame,
                                  year: int,
                                  table_path: str | Path,
                                  conn: DuckDBPyConnection) -> pd.DataFrame:
+    """
+    [description]
+    Compute per-id minimum distance to airports for a given `year`, scanning the
+    Parquet dataset at `table_path`.
+
+    [input]
+    - chunk: pandas.DataFrame — A chunk with columns [`C.ID_COL`, "wkt"].
+    - year: int — Target year to filter airports.
+    - table_path: str | pathlib.Path — Filesystem path to `airport.parquet`.
+    - conn: duckdb.DuckDBPyConnection — In-memory DuckDB connection with Spatial loaded.
+
+    [output]
+    - pandas.DataFrame — Columns [`C.ID_COL`, `C.VAR_COL`, `C.YEAR_COL`, `C.VAL_COL`].
+    """
     # register chunk geometries
     conn.register('chunk_wkt', chunk)
     conn.execute(f"""
@@ -51,6 +84,22 @@ def airport_distance_worker(task_queue,
                             year: int,
                             table_path: str | Path,
                             memory_limit: str):
+    """
+    [description]
+    Worker loop that pulls chunks from `task_queue`, computes airport distances for
+    the specified `year` using the Parquet file at `table_path`, and pushes results
+    to `result_queue`.
+
+    [input]
+    - task_queue: multiprocessing.Queue — Provides chunk DataFrames or sentinel.
+    - result_queue: multiprocessing.Queue — Receives `(chunk_len, result_df)` or sentinel.
+    - year: int — Target year.
+    - table_path: str | pathlib.Path — Path to `airport.parquet`.
+    - memory_limit: str — Passed to DuckDB memory connection.
+
+    [output]
+    - None — Side effects: places results on `result_queue` and a sentinel when done.
+    """
     conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
     try:
         while True:

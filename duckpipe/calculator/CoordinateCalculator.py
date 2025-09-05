@@ -1,3 +1,14 @@
+"""
+Coordinate calculator.
+
+Derives representative coordinates (centroid or representative point) for input
+features and exports them in both WGS84 (EPSG:4326) and a projected CRS
+(EPSG:5179) as scalar variables. Operates on `self.geom_df` prepared by
+`Calculator.set_dataframe()` and appends results to `self.result_df`.
+
+Public API:
+- `CoordinateCalculator.calculate_coordinate()`
+"""
 import pandas as pd
 from typeguard import typechecked
 from typing import Self
@@ -21,6 +32,27 @@ class CoordinateCalculator:
 
     @typechecked
     def calculate_coordinate(self, mode: str="centroid") -> Self:
+        """
+        Compute representative point coordinates and emit four variables:
+        `WGS_X`, `WGS_Y`, `TM_X`, `TM_Y`. The representative point is given by
+        `ST_Centroid` (default) or `ST_PointOnSurface` depending on `mode`.
+
+        Parameters:
+        - mode: str — One of {"centroid", "representative_point"}. Defaults to "centroid".
+
+        Returns:
+        - Self — Returns the Calculator instance with new rows appended to `self.result_df`
+          in long format with columns [`C.ID_COL`, `C.VAR_COL`, `C.VAL_COL`].
+
+        Example usage:
+        ```python
+        calculator = (
+            calculator
+            .set_dataframe(gdf)
+            .calculate_coordinate(mode="centroid")
+        )
+        ```
+        """
         # input check
         _supported_modes = [k for k in SUPPORTED_MODE_FUNCS.keys()]
         if mode not in _supported_modes:

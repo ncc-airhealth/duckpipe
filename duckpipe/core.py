@@ -34,7 +34,7 @@ class Calculator(Clustering,
     ```python
     import duckpipe as dp
 
-    calculator = dp.Calculator(db_path="example.duckdb", n_workers=2, memory_limit="6GB")
+    calculator = dp.Calculator(db_path="path/to/parquet_dir", n_workers=2, memory_limit="6GB")
     result = (
         calculator
         .set_dataframe(gdf)  # a GeoDataFrame with geometry in EPSG:4326
@@ -51,10 +51,11 @@ class Calculator(Clustering,
     def __init__(self, db_path: str | Path, n_workers: int=8, memory_limit: str="5GB", verbose=True):
         """
         [description]
-        Initialize the Calculator with a DuckDB connection and runtime configuration.
+        Initialize the Calculator with an in-memory DuckDB connection and runtime configuration.
 
         [input]
-        - db_path: str — Path to the DuckDB database to attach (read-only).
+        - db_path: str | Path — Directory path containing Parquet files used by calculators (e.g.,
+          "airport.parquet", "coastline.parquet", "landuse_YYYY.parquet", "dem.parquet", "dsm.parquet").
         - n_workers: int — Number of worker processes used by calculator methods.
         - memory_limit: str — Memory limit passed to DuckDB (e.g., "6GB").
         - verbose: bool — If True, prints progress bars and elapsed time.
@@ -65,7 +66,7 @@ class Calculator(Clustering,
         [example usage]
         ```python
         import duckpipe as dp
-        calculator = dp.Calculator(db_path="example.duckdb", n_workers=2, memory_limit="6GB")
+        calculator = dp.Calculator(db_path="path/to/parquet_dir", n_workers=2, memory_limit="6GB")
         ```
         """
         self.n_workers = n_workers
@@ -91,7 +92,7 @@ class Calculator(Clustering,
 
         [example usage]
         ```python
-        calculator = dp.Calculator(db_path="example.duckdb")
+        calculator = dp.Calculator(db_path="path/to/parquet_dir")
         calculator = calculator.set_dataframe(gdf)
         ```
         """

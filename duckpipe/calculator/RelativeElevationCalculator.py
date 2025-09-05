@@ -1,3 +1,24 @@
+"""
+Relative elevation calculator (Parquet backend).
+
+Computes reference elevation at features and relative elevation ratios in donut
+rings for requested elevation sources (e.g., DEM/DSM) and buffer sizes. Uses
+multiprocessing with an in-memory DuckDB + Spatial connection. Elevation data
+is read from Parquet files named "dem.parquet" and "dsm.parquet" under
+`self.db_path`.
+
+Expected Parquet schema (minimum):
+- geometry: pixel/cell footprint polygons compatible with DuckDB Spatial
+- value: numeric elevation value per pixel/cell
+- centroid_x, centroid_y: numeric columns used for coarse AOI prefiltering
+
+Public API:
+- `RelativeElevationCalculator.calculate_relative_elevation()`
+
+Internal helpers:
+- `query_relative_elevation_chunk()` reads a chunk and returns stats for one source
+- `relative_elevation_worker()` worker loop that processes chunks
+"""
 import pandas as pd
 import queue
 import multiprocessing as mp
@@ -5,9 +26,10 @@ from typeguard import typechecked
 from typing import Self
 from duckdb import DuckDBPyConnection
 from tqdm import tqdm
+from pathlib import Path
 
 import duckpipe.common as C
-from duckpipe.duckdb_utils import generate_duckdb_connection
+from duckpipe.duckdb_utils import generate_duckdb_memory_connection
 
 VALID_TABLE_VAR_NAME = {
     "dem": ("Alt_k", "Altitude_k"), 
@@ -20,8 +42,26 @@ DEM_SPATIAL_RESOLUTION = 90
 def query_relative_elevation_chunk(chunk: pd.DataFrame,
                                    table: str,
                                    buffer_sizes: list[float], 
+                                   table_path: str | Path,
                                    conn: DuckDBPyConnection
                                    ) -> pd.DataFrame:
+    """
+    [description]
+    Compute reference elevation at features and relative elevation ratios within
+    donut rings for one elevation source (`table`) and the given `buffer_sizes`,
+    scanning the Parquet dataset at `table_path`.
+
+    [input]
+    - chunk: pandas.DataFrame — A chunk with columns [`C.ID_COL`, "wkt"].
+    - table: str — Elevation source name (e.g., "dem", "dsm").
+    - buffer_sizes: list[float] — Buffer distances (meters) for donut rings.
+    - table_path: str | pathlib.Path — Filesystem path to the Parquet file for `table`.
+    - conn: duckdb.DuckDBPyConnection — In-memory DuckDB connection with Spatial loaded.
+
+    [output]
+    - pandas.DataFrame — Long-form rows for relative elevation ratios and reference elevation
+      with columns [`C.ID_COL`, `C.VAR_COL`, `C.YEAR_COL` (NULL), `C.VAL_COL`].
+    """
     # prepare
     rel_elev_prefix, ref_elev_prefix = VALID_TABLE_VAR_NAME[table]
     # generate chunk table
@@ -50,10 +90,10 @@ def query_relative_elevation_chunk(chunk: pd.DataFrame,
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE aoi_elevation AS (
         SELECT 
-            val, 
+            value AS val, 
             geometry
         FROM 
-            {table}
+            '{table_path}'
         WHERE 
             (centroid_x < {xmax}) AND 
             (centroid_x > {xmin}) AND 
@@ -156,11 +196,28 @@ def query_relative_elevation_chunk(chunk: pd.DataFrame,
 @typechecked
 def relative_elevation_worker(task_queue,
                               result_queue,
-                              db_path: str,
                               table: str,
                               buffer_sizes: list[float], 
+                              table_path: str | Path,
                               memory_limit: str = "4GB"):
-    conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
+    """
+    [description]
+    Worker loop that pulls chunks from `task_queue` and computes relative elevation
+    metrics for the specified elevation `table` and `buffer_sizes`, scanning the
+    Parquet file at `table_path`.
+
+    [input]
+    - task_queue: multiprocessing.Queue — Provides chunk DataFrames or sentinel.
+    - result_queue: multiprocessing.Queue — Receives `(chunk_len, result_df)` or sentinel.
+    - table: str — Elevation source (e.g., "dem", "dsm").
+    - buffer_sizes: list[float] — Buffer distances (meters) for donut rings.
+    - table_path: str | pathlib.Path — Path to Parquet file for the elevation source.
+    - memory_limit: str — Passed to DuckDB memory connection.
+
+    [output]
+    - None — Side effects: places results on `result_queue` and a sentinel when done.
+    """
+    conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
     try:
         while True:
             try:
@@ -170,13 +227,14 @@ def relative_elevation_worker(task_queue,
                         result_queue.put(C.SENTINEL)
                         break
                 chunk = task  # pandas DataFrame [ID_COL, wkt]
-                res = query_relative_elevation_chunk(chunk, table, buffer_sizes, conn)
+                res = query_relative_elevation_chunk(chunk, table, buffer_sizes, table_path, conn)
                 result_queue.put((len(chunk), res))
             except queue.Empty:
                 continue
     finally:
         conn.close()
     return
+
 
 class RelativeElevationCalculator:
 
@@ -231,8 +289,9 @@ class RelativeElevationCalculator:
             task_queue = mp.Queue()
             result_queue = mp.Queue()
             workers = []
+            table_path = (self.db_path / table).with_suffix(f".parquet")
             for _ in range(self.n_workers):
-                args = (task_queue, result_queue, self.db_path, table, buffer_sizes, self.memory_limit)
+                args = (task_queue, result_queue, table, buffer_sizes, table_path, self.memory_limit)
                 p = mp.Process(target=relative_elevation_worker, args=args)
                 p.start()
                 workers.append(p)
