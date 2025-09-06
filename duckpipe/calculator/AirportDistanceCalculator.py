@@ -56,21 +56,31 @@ def query_airport_distance_chunk(chunk: pd.DataFrame,
     conn.register('chunk_wkt', chunk)
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE chunk AS (
-        SELECT {C.ID_COL}, ST_GeomFromText(wkt) AS geometry
-        FROM chunk_wkt
+        SELECT 
+            {C.ID_COL}, 
+            ST_GeomFromText(wkt) AS geometry
+        FROM 
+            chunk_wkt
     )
     """)
     # compute per-id minimum distance to airports in the given year
     result = conn.execute(f"""
+    WITH airport_sel_year AS (
+        SELECT *
+        FROM '{table_path}'
+        WHERE year = {year}
+    )
     SELECT 
-        c.{C.ID_COL} AS {C.ID_COL}
-        , '{VAR_PREFIX}' AS {C.VAR_COL}
-        , {year} AS {C.YEAR_COL}
-        , MIN(ST_Distance(a.geometry, c.geometry)) AS {C.VAL_COL}
-    FROM chunk AS c
-    CROSS JOIN '{table_path}' AS a
-    WHERE a.year = {year}
-    GROUP BY c.{C.ID_COL}
+        c.{C.ID_COL} AS {C.ID_COL}, 
+        '{VAR_PREFIX}' AS {C.VAR_COL}, 
+        {year} AS {C.YEAR_COL}, 
+        MIN(ST_Distance(a.geometry, c.geometry)) AS {C.VAL_COL}
+    FROM 
+        chunk AS c
+    CROSS JOIN 
+        airport_sel_year AS a
+    GROUP BY 
+        c.{C.ID_COL}
     """).df()
     # clear temp objects
     conn.execute("DROP TABLE IF EXISTS chunk")

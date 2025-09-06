@@ -31,6 +31,7 @@ from duckpipe.duckdb_utils import generate_duckdb_memory_connection
 VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
 TABLE_NAME = "coastline"
 VAR_PREFIX = "D_Coast"
+SIMPLIFY_THRESHOLD = 1
 
 def query_coastline_distance_chunk(chunk: pd.DataFrame, 
                                    year: int, 
@@ -54,21 +55,35 @@ def query_coastline_distance_chunk(chunk: pd.DataFrame,
     conn.register('chunk_wkt', chunk)
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE chunk AS (
-        SELECT {C.ID_COL}, ST_GeomFromText(wkt) AS geometry
-        FROM chunk_wkt
+        SELECT 
+            {C.ID_COL}, 
+            ST_GeomFromText(wkt) AS geometry
+        FROM 
+            chunk_wkt
     )
     """)
     # compute distances
     result = conn.execute(f"""
+    WITH 
+    coastline_sel_year AS (
+        SELECT
+            ST_Simplify(geometry, {SIMPLIFY_THRESHOLD}) AS geometry
+        FROM 
+            '{table_path}'
+        WHERE 
+            year = {year}
+    )
     SELECT 
-        c.{C.ID_COL} AS {C.ID_COL}
-        , '{VAR_PREFIX}' AS {C.VAR_COL}
-        , {year} AS {C.YEAR_COL}
-        , MIN(ST_Distance(t.geometry, c.geometry)) AS {C.VAL_COL}
-    FROM chunk AS c
-    CROSS JOIN '{table_path}' AS t
-    WHERE t.year = {year}
-    GROUP BY c.{C.ID_COL}
+        c.{C.ID_COL} AS {C.ID_COL}, 
+        '{VAR_PREFIX}' AS {C.VAR_COL}, 
+        {year} AS {C.YEAR_COL}, 
+        MIN(ST_Distance(t.geometry, c.geometry)) AS {C.VAL_COL}
+    FROM 
+        chunk AS c
+    CROSS JOIN 
+        coastline_sel_year AS t
+    GROUP BY 
+        c.{C.ID_COL}
     """).df()
     # clear
     conn.execute("DROP TABLE IF EXISTS chunk")
