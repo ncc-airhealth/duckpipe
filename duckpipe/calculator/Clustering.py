@@ -25,7 +25,7 @@ class Clustering:
     chunks = calculator.get_chunks()
     ```
     """
-
+    
     @typechecked
     def get_chunks(self):
         """

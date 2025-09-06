@@ -66,6 +66,7 @@ def query_coordinate_chunk(chunk: pd.DataFrame,
         SELECT 
             {C.ID_COL}, 
             '{GCS_VAR_X}' AS {C.VAR_COL}, 
+            NULL AS {C.YEAR_COL}, 
             ST_Y( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{GCS_EPSG}') ) AS {C.VAL_COL}
         FROM raw_coords
     ),
@@ -73,6 +74,7 @@ def query_coordinate_chunk(chunk: pd.DataFrame,
         SELECT 
             {C.ID_COL}, 
             '{GCS_VAR_Y}' AS {C.VAR_COL}, 
+            NULL AS {C.YEAR_COL}, 
             ST_X( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{GCS_EPSG}') ) AS {C.VAL_COL}
         FROM raw_coords
     ),
@@ -80,6 +82,7 @@ def query_coordinate_chunk(chunk: pd.DataFrame,
         SELECT 
             {C.ID_COL}, 
             '{PCS_VAR_X}' AS {C.VAR_COL}, 
+            NULL AS {C.YEAR_COL}, 
             ST_Y( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{PCS_EPSG}') ) AS {C.VAL_COL}
         FROM raw_coords
     ), 
@@ -87,6 +90,7 @@ def query_coordinate_chunk(chunk: pd.DataFrame,
         SELECT 
             {C.ID_COL}, 
             '{PCS_VAR_Y}' AS {C.VAR_COL}, 
+            NULL AS {C.YEAR_COL}, 
             ST_X( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{PCS_EPSG}') ) AS {C.VAL_COL}
         FROM raw_coords
     ),
