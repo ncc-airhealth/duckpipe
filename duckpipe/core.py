@@ -110,7 +110,7 @@ class Calculator(Clustering,
             .drop(columns=[self.geom_col])
         )
         # chunking
-        self.chunk_by_centroid(max_cluster_size=100, distance_threshold=10000)
+        self.chunk_by_order(max_cluster_size=100)
         # result preparation
         self.result_df = pd.DataFrame()
         return self
