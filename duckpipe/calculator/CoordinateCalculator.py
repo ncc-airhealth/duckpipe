@@ -1,14 +1,3 @@
-"""
-Coordinate calculator.
-
-Derives representative coordinates (centroid or representative point) for input
-features and exports them in both WGS84 (EPSG:4326) and a projected CRS
-(EPSG:5179) as scalar variables. Operates on `self.geom_df` prepared by
-`Calculator.set_dataframe()` and appends results to `self.result_df`.
-
-Public API:
-- `CoordinateCalculator.calculate_coordinate()`
-"""
 import pandas as pd
 import queue
 import multiprocessing as mp
@@ -31,6 +20,8 @@ GCS_VAR_X = "WGS_X"
 GCS_VAR_Y = "WGS_Y"
 PCS_VAR_X = "TM_X"
 PCS_VAR_Y = "TM_Y"
+
+TQDM_DESC = lambda mode: f"Coordinate ({mode})"
 
 
 def query_coordinate_chunk(chunk: pd.DataFrame,
@@ -181,7 +172,7 @@ class CoordinateCalculator:
         for _ in range(self.n_workers):
             task_queue.put(C.SENTINEL)
         # aggregate results with progress by chunk size
-        description = f"coordinate ({mode})"
+        description = TQDM_DESC(mode)
         tq = tqdm(total=len(self.geom_df), bar_format=C.TQDM_BAR_FORMAT, desc=description, disable=not self.verbose)
         n_alive_workers = self.n_workers
         while n_alive_workers > 0:

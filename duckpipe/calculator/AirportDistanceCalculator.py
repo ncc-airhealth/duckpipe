@@ -1,22 +1,3 @@
-"""
-Airport distance calculator (Parquet backend).
-
-Computes per-feature minimum distance to airports for requested years using
-multiprocessing with an in-memory DuckDB + Spatial connection. Airport data is
-read from a Parquet file named "airport.parquet" under `self.db_path`.
-
-Expected Parquet schema (minimum):
-- geometry: spatial geometry column compatible with DuckDB Spatial
-- year: integer year column used for filtering
-
-Public API:
-- `AirportDistanceCalculator.calculate_airport_distance()`
-
-Internal helpers:
-- `query_airport_distance_chunk()` reads a chunk and returns distances for one year
-- `airport_distance_worker()` worker loop that executes the chunk query repeatedly
-"""
-
 import pandas as pd
 import queue
 import multiprocessing as mp
@@ -27,52 +8,42 @@ from tqdm import tqdm
 from pathlib import Path
 
 import duckpipe.common as C
-from duckpipe.duckdb_utils import generate_duckdb_connection, generate_duckdb_memory_connection
+from duckpipe.duckdb_utils import generate_duckdb_memory_connection
 
 VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
 TABLE_NAME = "airport"
-VAR_PREFIX = "D_Airport"
+VAR_NAME_MACRO = """
+CREATE OR REPLACE MACRO varname() AS
+    'D_Airport'
+"""
+TQDM_DESC = lambda year: f"Airport distance ({year})"
 
 
-def query_airport_distance_chunk(chunk: pd.DataFrame,
-                                 year: int,
-                                 table_path: str | Path,
-                                 conn: DuckDBPyConnection) -> pd.DataFrame:
-    """
-    [description]
-    Compute per-id minimum distance to airports for a given `year`, scanning the
-    Parquet dataset at `table_path`.
-
-    [input]
-    - chunk: pandas.DataFrame — A chunk with columns [`C.ID_COL`, "wkt"].
-    - year: int — Target year to filter airports.
-    - table_path: str | pathlib.Path — Filesystem path to `airport.parquet`.
-    - conn: duckdb.DuckDBPyConnection — In-memory DuckDB connection with Spatial loaded.
-
-    [output]
-    - pandas.DataFrame — Columns [`C.ID_COL`, `C.VAR_COL`, `C.YEAR_COL`, `C.VAL_COL`].
-    """
+def _query(chunk: pd.DataFrame,
+           year: int,
+           table_path: str | Path,
+           conn: DuckDBPyConnection) -> pd.DataFrame:
+    """duckdb SQL query"""
+    # create varname macro
+    conn.execute(VAR_NAME_MACRO)
     # register chunk geometries
     conn.register('chunk_wkt', chunk)
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE chunk AS (
-        SELECT 
-            {C.ID_COL}, 
-            ST_GeomFromText(wkt) AS geometry
-        FROM 
-            chunk_wkt
+        SELECT {C.ID_COL}, ST_GeomFromText(wkt) AS geometry
+        FROM chunk_wkt
     )
     """)
     # compute per-id minimum distance to airports in the given year
-    result = conn.execute(f"""
+    query = f"""
     WITH airport_sel_year AS (
-        SELECT *
+        SELECT geometry
         FROM '{table_path}'
         WHERE year = {year}
     )
     SELECT 
         c.{C.ID_COL} AS {C.ID_COL}, 
-        '{VAR_PREFIX}' AS {C.VAR_COL}, 
+        varname() AS {C.VAR_COL}, 
         {year} AS {C.YEAR_COL}, 
         MIN(ST_Distance(a.geometry, c.geometry)) AS {C.VAL_COL}
     FROM 
@@ -81,7 +52,8 @@ def query_airport_distance_chunk(chunk: pd.DataFrame,
         airport_sel_year AS a
     GROUP BY 
         c.{C.ID_COL}
-    """).df()
+    """
+    result = conn.execute(query).df()
     # clear temp objects
     conn.execute("DROP TABLE IF EXISTS chunk")
     conn.unregister('chunk_wkt')
@@ -89,27 +61,12 @@ def query_airport_distance_chunk(chunk: pd.DataFrame,
 
 
 @typechecked
-def airport_distance_worker(task_queue, 
-                            result_queue, 
-                            year: int,
-                            table_path: str | Path,
-                            memory_limit: str):
-    """
-    [description]
-    Worker loop that pulls chunks from `task_queue`, computes airport distances for
-    the specified `year` using the Parquet file at `table_path`, and pushes results
-    to `result_queue`.
-
-    [input]
-    - task_queue: multiprocessing.Queue — Provides chunk DataFrames or sentinel.
-    - result_queue: multiprocessing.Queue — Receives `(chunk_len, result_df)` or sentinel.
-    - year: int — Target year.
-    - table_path: str | pathlib.Path — Path to `airport.parquet`.
-    - memory_limit: str — Passed to DuckDB memory connection.
-
-    [output]
-    - None — Side effects: places results on `result_queue` and a sentinel when done.
-    """
+def _worker(task_queue: mp.Queue, 
+            result_queue: mp.Queue, 
+            year: int,
+            table_path: str | Path,
+            memory_limit: str):
+    """worker loop"""
     conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
     try:
         while True:
@@ -120,7 +77,12 @@ def airport_distance_worker(task_queue,
                     break
                 chunk = task  # pandas DataFrame with [ID_COL, wkt]
                 table_path = table_path
-                result = query_airport_distance_chunk(chunk, year, table_path, conn)
+                result = _query(
+                    chunk=chunk,
+                    year=year,
+                    table_path=table_path,
+                    conn=conn
+                )
                 result_queue.put((len(chunk), result))
             except queue.Empty:
                 continue
@@ -176,7 +138,7 @@ class AirportDistanceCalculator:
             for _ in range(self.n_workers):
                 table_path = (self.db_path / TABLE_NAME).with_suffix(f".parquet")
                 args = (task_queue, result_queue, year, table_path, self.memory_limit)
-                p = mp.Process(target=airport_distance_worker, args=args)
+                p = mp.Process(target=_worker, args=args)
                 p.start()
                 workers.append(p)
             # enqueue chunk tasks
@@ -186,7 +148,7 @@ class AirportDistanceCalculator:
             for _ in range(self.n_workers):
                 task_queue.put(C.SENTINEL)
             # aggregate results with progress by chunk size
-            description = f"{VAR_PREFIX} ({year})"
+            description = TQDM_DESC(year)
             tq = tqdm(total=len(self.geom_df), bar_format=C.TQDM_BAR_FORMAT, desc=description, disable=not self.verbose)
             n_alive_workers = self.n_workers
             while n_alive_workers > 0:
