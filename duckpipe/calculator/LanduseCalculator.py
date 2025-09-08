@@ -5,22 +5,31 @@ from typeguard import typechecked
 from typing import Self
 from duckdb import DuckDBPyConnection
 from tqdm import tqdm
+from pathlib import Path
 
 import duckpipe.common as C
-from duckpipe.duckdb_utils import generate_duckdb_connection
+from duckpipe.duckdb_utils import generate_duckdb_memory_connection
 
 VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
 VAR_PREFIX = "LS"
+VAR_NAME_MACRO = """
+CREATE OR REPLACE MACRO varname(lu_code, buffer_size, stat_type) AS
+    -- stat_type: a (area) or p (proportion)
+    printf('%s%s_%04d_%s', 'LS', lu_code, buffer_size::INTEGER, stat_type)
+"""
+TQDM_DESC = lambda year, buffer_sizes: f"Landuse ({year}) (buffer_sizes: {buffer_sizes})"
 
-
-def query_landuse_area_ratio(chunk: pd.DataFrame,
-                             year: int,
-                             buffer_sizes: list[float],
-                             conn: DuckDBPyConnection,
-                             ) -> pd.DataFrame:
+def _query(chunk: pd.DataFrame,
+           year: int,
+           buffer_sizes: list[float],
+           table_path: str | Path,
+           conn: DuckDBPyConnection,
+           ) -> pd.DataFrame:
+    """duckdb SQL query"""
     # prepare
-    table = f"landuse_{year}"
-    # generate chunk table
+    conn.execute(VAR_NAME_MACRO)
+    max_buffer_size = max(buffer_sizes)
+    # register chunk geometries
     conn.register('chunk_wkt', chunk)
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE chunk AS (
@@ -28,38 +37,43 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
         FROM chunk_wkt
     )
     """)
-    # define aoi bbox
-    # by duckdb optimizer error, bbox filter is faster than ST_Intersects
-    # if using aoi directly in query, memory usage goes up to 9GB per worker
-    # full table-scanning for every iteration (checked by EXPLAIN ANALYZE)
-    max_buffer_size = max(buffer_sizes)
-    sql = f"""
-    WITH aoi AS ( 
-        SELECT ST_Envelope(ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size})) AS aoi 
-        FROM chunk 
-    )
-    SELECT ST_XMin(aoi), ST_YMin(aoi), ST_XMax(aoi), ST_YMax(aoi), ST_AsText(aoi)
-    FROM aoi
-    """
-    xmin, ymin, xmax, ymax, aoi_wkt = conn.execute(sql).fetchone()
-    conn.execute(f"""
+    # get aoi landuse table
+    query = f"""
     CREATE OR REPLACE TEMP TABLE aoi_landuse AS (
-        SELECT 
-            ST_Intersection(geometry, ST_GeomFromText('{aoi_wkt}')) AS geometry,
-            code
-        FROM {table}
-        WHERE 
-            bbox.xmin < {xmax} AND 
-            bbox.xmax > {xmin} AND 
-            bbox.ymin < {ymax} AND 
-            bbox.ymax > {ymin}
+        WITH 
+        aoi AS ( 
+            SELECT
+                MIN(ST_XMin(geometry)) - {max_buffer_size} AS xmin, 
+                MIN(ST_YMin(geometry)) - {max_buffer_size} AS ymin, 
+                MAX(ST_XMax(geometry)) + {max_buffer_size} AS xmax, 
+                MAX(ST_YMax(geometry)) + {max_buffer_size} AS ymax, 
+                ST_Envelope(ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size})) AS geometry
+            FROM chunk 
+            GROUP BY GROUPING SETS (())
+        ), 
+        filtered AS (
+            SELECT 
+                ST_Intersection(t.geometry, a.geometry) AS geometry,
+                code
+            FROM 
+                '{table_path}' AS t, aoi AS a
+            WHERE 
+                t.xmin <= a.xmax AND 
+                t.xmax >= a.xmin AND 
+                t.ymin <= a.ymax AND 
+                t.ymax >= a.ymin
+        )
+        SELECT code, geometry
+        FROM filtered
+        WHERE NOT ST_IsEmpty(geometry)
     );
     CREATE INDEX rtree_aoi_landuse ON aoi_landuse
     USING RTREE (geometry) WITH (max_node_capacity = 4);
-    """)
+    """
+    conn.execute(query)
     # main query
     conn.register('buffer_size', pd.DataFrame({"buffer_size": buffer_sizes}))
-    result = conn.execute(f"""
+    query = f"""
     WITH 
     aoi AS (
         SELECT 
@@ -87,18 +101,15 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
     , renamed AS (
         SELECT 
             {C.ID_COL}
-            , CONCAT( 
-                '{VAR_PREFIX}', lu_code, '_', 
-                LPAD(buffer_size::VARCHAR, 4, '0'), '_', 
-                stat_type 
-            ) AS {C.VAR_COL}
+            , varname(lu_code, buffer_size, stat_type) AS {C.VAR_COL}
             , {year} AS {C.YEAR_COL}
             , val AS {C.VAL_COL}
         FROM unpivoted
     )
     SELECT * 
     FROM renamed
-    """).df()
+    """
+    result = conn.execute(query).df()
     # clear temporary table
     conn.execute("DROP INDEX IF EXISTS rtree_aoi_landuse")
     conn.execute("DROP TABLE IF EXISTS chunk")
@@ -110,14 +121,30 @@ def query_landuse_area_ratio(chunk: pd.DataFrame,
 
 
 @typechecked
-def landuse_area_ratio_worker(task_queue, 
-                              result_queue, 
-                              db_path: str, 
-                              year: int, 
-                              buffer_sizes: list[float],
-                              memory_limit: str):
-    conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
-    # conn.execute(f"ANALYZE landuse_{year};")
+def _worker(task_queue: mp.Queue, 
+            result_queue: mp.Queue, 
+            year: int, 
+            buffer_sizes: list[float],
+            table_path: str | Path,
+            memory_limit: str):
+    """
+    [description]
+    Worker loop that pulls chunks from `task_queue` and computes land-use area/ratio
+    stats for the specified `year` and `buffer_sizes`, scanning the Parquet file at
+    `table_path`.
+
+    [input]
+    - task_queue: multiprocessing.Queue — Provides chunk DataFrames or sentinel.
+    - result_queue: multiprocessing.Queue — Receives `(chunk_len, result_df)` or sentinel.
+    - year: int — Target year.
+    - buffer_sizes: list[float] — Buffer distances (meters).
+    - table_path: str | pathlib.Path — Path to `landuse_{year}.parquet`.
+    - memory_limit: str — Passed to DuckDB memory connection.
+
+    [output]
+    - None — Side effects: places results on `result_queue` and a sentinel when done.
+    """
+    conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
     try:
         while True:
             try:
@@ -127,7 +154,7 @@ def landuse_area_ratio_worker(task_queue,
                         result_queue.put(C.SENTINEL)
                         break
                 chunk = task
-                res = query_landuse_area_ratio(chunk, year, buffer_sizes, conn)
+                res = _query(chunk, year, buffer_sizes, table_path, conn)
                 result_queue.put((len(chunk), res))
             except queue.Empty:
                 continue
@@ -168,6 +195,11 @@ class LanduseCalculator:
             .get_result(pivot=True)
         )
         ```
+        
+        [notes]
+        - Data source: Parquet file per-year resolved as `(self.db_path / f"landuse_{year}").with_suffix(".parquet")`.
+        - Variable naming: `LS{lu_code}_{buffer_size:04d}_{stat}` where `stat` ∈ {`a`, `p`}.
+        - Results are appended to `self.result_df` in long format and can be pivoted via `get_result(pivot=True)`.
         """
         # input conversion
         if isinstance(years, int):
@@ -190,9 +222,10 @@ class LanduseCalculator:
             task_queue = mp.Queue()
             result_queue = mp.Queue()
             workers = []
+            table_path = (self.db_path / f"landuse_{year}").with_suffix(f".parquet")
             for _ in range(self.n_workers):
-                args = (task_queue, result_queue, self.db_path, year, buffer_sizes, self.memory_limit)
-                p = mp.Process(target=landuse_area_ratio_worker, args=args)
+                args = (task_queue, result_queue, year, buffer_sizes, table_path, self.memory_limit)
+                p = mp.Process(target=_worker, args=args)
                 p.start()
                 workers.append(p)
             # enqueue chunk tasks
@@ -202,7 +235,7 @@ class LanduseCalculator:
             for _ in range(self.n_workers):
                 task_queue.put(C.SENTINEL)
             # aggregate results with progress by chunk size
-            desc = f"landuse ({year}) (buffer_sizes: {buffer_sizes})"
+            desc = TQDM_DESC(year, buffer_sizes)
             tq = tqdm(total=len(self.geom_df), bar_format=C.TQDM_BAR_FORMAT, desc=desc, disable=not self.verbose)
             n_alive_workers = self.n_workers
             while n_alive_workers > 0:
@@ -221,4 +254,3 @@ class LanduseCalculator:
         df = pd.concat(results)    
         self.result_df = pd.concat([self.result_df, df], ignore_index=True)
         return self
-    

@@ -3,6 +3,7 @@ import pandas as pd
 from typeguard import typechecked
 from typing import Self
 from datetime import datetime
+from pathlib import Path
 
 import duckpipe.common as C
 from duckpipe.calculator.Clustering import Clustering
@@ -11,7 +12,7 @@ from duckpipe.calculator.LanduseCalculator import LanduseCalculator
 from duckpipe.calculator.AirportDistanceCalculator import AirportDistanceCalculator
 from duckpipe.calculator.CoastlineDistanceCalculator import CoastlineDistanceCalculator
 from duckpipe.calculator.RelativeElevationCalculator import RelativeElevationCalculator
-from duckpipe.duckdb_utils import generate_duckdb_connection, install_duckdb_extensions
+from duckpipe.duckdb_utils import generate_duckdb_connection, install_duckdb_extensions, generate_duckdb_memory_connection
 
 
 
@@ -33,7 +34,7 @@ class Calculator(Clustering,
     ```python
     import duckpipe as dp
 
-    calculator = dp.Calculator(db_path="example.duckdb", n_workers=2, memory_limit="6GB")
+    calculator = dp.Calculator(db_path="path/to/parquet_dir", n_workers=2, memory_limit="6GB")
     result = (
         calculator
         .set_dataframe(gdf)  # a GeoDataFrame with geometry in EPSG:4326
@@ -47,13 +48,14 @@ class Calculator(Clustering,
     ```
     """
     @typechecked
-    def __init__(self, db_path: str, n_workers: int=8, memory_limit: str="5GB", verbose=True):
+    def __init__(self, db_path: str | Path, n_workers: int=8, memory_limit: str="5GB", verbose=True):
         """
         [description]
-        Initialize the Calculator with a DuckDB connection and runtime configuration.
+        Initialize the Calculator with an in-memory DuckDB connection and runtime configuration.
 
         [input]
-        - db_path: str — Path to the DuckDB database to attach (read-only).
+        - db_path: str | Path — Directory path containing Parquet files used by calculators (e.g.,
+          "airport.parquet", "coastline.parquet", "landuse_YYYY.parquet", "dem.parquet", "dsm.parquet").
         - n_workers: int — Number of worker processes used by calculator methods.
         - memory_limit: str — Memory limit passed to DuckDB (e.g., "6GB").
         - verbose: bool — If True, prints progress bars and elapsed time.
@@ -64,15 +66,15 @@ class Calculator(Clustering,
         [example usage]
         ```python
         import duckpipe as dp
-        calculator = dp.Calculator(db_path="example.duckdb", n_workers=2, memory_limit="6GB")
+        calculator = dp.Calculator(db_path="path/to/parquet_dir", n_workers=2, memory_limit="6GB")
         ```
         """
         self.n_workers = n_workers
         self.memory_limit = memory_limit
         self.verbose = verbose
-        self.db_path = db_path
+        self.db_path = Path(db_path)
         install_duckdb_extensions()
-        self.conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
+        self.conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
         self.start_time = datetime.now()
 
     @typechecked
@@ -90,7 +92,7 @@ class Calculator(Clustering,
 
         [example usage]
         ```python
-        calculator = dp.Calculator(db_path="example.duckdb")
+        calculator = dp.Calculator(db_path="path/to/parquet_dir")
         calculator = calculator.set_dataframe(gdf)
         ```
         """
@@ -108,7 +110,7 @@ class Calculator(Clustering,
             .drop(columns=[self.geom_col])
         )
         # chunking
-        self.chunk_by_centroid(max_cluster_size=100, distance_threshold=10000)
+        self.chunk_by_order(max_cluster_size=100)
         # result preparation
         self.result_df = pd.DataFrame()
         return self

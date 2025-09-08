@@ -5,25 +5,50 @@ from typeguard import typechecked
 from typing import Self
 from duckdb import DuckDBPyConnection
 from tqdm import tqdm
+from pathlib import Path
 
 import duckpipe.common as C
-from duckpipe.duckdb_utils import generate_duckdb_connection
+from duckpipe.duckdb_utils import generate_duckdb_memory_connection
 
-VALID_TABLE_VAR_NAME = {
-    "dem": ("Alt_k", "Altitude_k"), 
-    "dsm": ("Alt_a", "Altitude_a")
-}
 DONUT_THICKNESS = 30
 DEM_SPATIAL_RESOLUTION = 90
+VALID_ELEVATION_TYPES = ["dem", "dsm"]
+VAR_NAME_MACRO_REL = """
+CREATE OR REPLACE MACRO varname_rel(elev_type, stat, buffer_size) AS
+    printf('%s_%s_%s', 
+        CASE
+            WHEN elev_type = 'dem' THEN 'Alt_k'
+            WHEN elev_type = 'dsm' THEN 'Alt_a'
+            ELSE 'error_processing_relative_elevation'
+        END, 
+        stat, 
+        buffer_size::VARCHAR
+    )
+"""
+VAR_NAME_MACRO_REF = """
+CREATE OR REPLACE MACRO varname_ref(elev_type) AS 
+    CASE
+        WHEN elev_type = 'dem' THEN 'Altitude_k'
+        WHEN elev_type = 'dsm' THEN 'Altitude_a'
+        ELSE 'error_processing_relative_elevation'
+    END
+"""
+TQDM_DESC = lambda elev_type, buffer_sizes: f"Relative elevation ({elev_type}) (buffer_sizes: {buffer_sizes})"
 
 
-def query_relative_elevation_chunk(chunk: pd.DataFrame,
-                                   table: str,
-                                   buffer_sizes: list[float], 
-                                   conn: DuckDBPyConnection
-                                   ) -> pd.DataFrame:
+def _query(chunk: pd.DataFrame,
+           elevation_type: str,
+           buffer_sizes: list[float], 
+           table_path: str | Path,
+           conn: DuckDBPyConnection
+           ) -> pd.DataFrame:
+    """duckdb SQL query"""
+    # input check
+    if elevation_type not in VALID_ELEVATION_TYPES:
+        raise ValueError(f"Invalid elevation type: {elevation_type}")
     # prepare
-    rel_elev_prefix, ref_elev_prefix = VALID_TABLE_VAR_NAME[table]
+    conn.execute(VAR_NAME_MACRO_REL)
+    conn.execute(VAR_NAME_MACRO_REF)
     # generate chunk table
     conn.register('chunk_wkt', chunk)
     conn.execute(f"""
@@ -34,44 +59,45 @@ def query_relative_elevation_chunk(chunk: pd.DataFrame,
         FROM chunk_wkt
     )
     """)
-    # query elevation subset
+    # build AOI + elevation subset (clip to AOI) with RTREE index
     max_buffer_size = max(buffer_sizes)
     clip_distance = max_buffer_size + DONUT_THICKNESS + 2 * DEM_SPATIAL_RESOLUTION
     query = f"""
-    SELECT 
-        MIN(ST_XMin(geometry)) - {clip_distance} AS xmin, 
-        MIN(ST_YMin(geometry)) - {clip_distance} AS ymin, 
-        MAX(ST_XMax(geometry)) + {clip_distance} AS xmax, 
-        MAX(ST_YMax(geometry)) + {clip_distance} AS ymax
-    FROM 
-        chunk
-    """
-    xmin, ymin, xmax, ymax = conn.execute(query).fetchone()
-    conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE aoi_elevation AS (
-        SELECT 
-            val, 
-            geometry
-        FROM 
-            {table}
-        WHERE 
-            (centroid_x < {xmax}) AND 
-            (centroid_x > {xmin}) AND 
-            (centroid_y < {ymax}) AND 
-            (centroid_y > {ymin})
+        WITH 
+        aoi AS (
+            SELECT
+                MIN(ST_XMin(geometry)) - {clip_distance} AS xmin,
+                MIN(ST_YMin(geometry)) - {clip_distance} AS ymin,
+                MAX(ST_XMax(geometry)) + {clip_distance} AS xmax,
+                MAX(ST_YMax(geometry)) + {clip_distance} AS ymax
+            FROM chunk
+            GROUP BY GROUPING SETS (())
+        )
+        , filtered AS (
+            SELECT 
+                t.geometry AS geometry,
+                t.value AS elev
+            FROM '{table_path}' AS t, aoi AS a
+            WHERE 
+                t.centroid_x BETWEEN a.xmin AND a.xmax AND
+                t.centroid_y BETWEEN a.ymin AND a.ymax
+        )
+        SELECT elev, geometry
+        FROM filtered
+        WHERE NOT ST_IsEmpty(geometry)
     );
-    CREATE INDEX rtree_temp ON aoi_elevation
-    USING RTREE (geometry)
+    CREATE INDEX rtree_aoi_elevation ON aoi_elevation
+    USING RTREE (geometry) 
     WITH (max_node_capacity = 4);
-    """)
-    # value
-    conn.register('buffer_size', pd.DataFrame({"buffer_size": buffer_sizes}))
-    result = conn.execute(f"""
-    WITH 
-    ref_elevation AS (
+    """
+    conn.execute(query)
+    # find reference elevation
+    query = f"""
+    CREATE OR REPLACE TEMP TABLE ref_elevation AS (
         SELECT 
-            c.{C.ID_COL} 
-            , MEAN(a.val) AS ref_val -- if point touches multiple pixels
+            c.{C.ID_COL}, 
+            MEAN(a.elev) AS ref_elev -- if point touches multiple pixels
         FROM 
             chunk AS c
         LEFT JOIN 
@@ -79,12 +105,27 @@ def query_relative_elevation_chunk(chunk: pd.DataFrame,
             ON ST_Intersects(c.geometry, a.geometry)
         GROUP BY 
             c.{C.ID_COL}
-    )
-    , donut AS (
+    );
+    """
+    conn.execute(query)
+    query = f"""
+    SELECT 
+        {C.ID_COL}, 
+        varname_ref('{elevation_type}') AS {C.VAR_COL}, 
+        NULL AS {C.YEAR_COL}, 
+        ref_elev AS {C.VAL_COL}
+    FROM ref_elevation
+    """
+    result_ref_elev = conn.execute(query).df()
+    # find relative elevation
+    conn.register('buffer_size', pd.DataFrame({"buffer_size": buffer_sizes}))
+    query = f"""
+    WITH 
+    donut AS (
         SELECT 
             c.{C.ID_COL}, 
             bs.buffer_size, 
-            re.ref_val, 
+            re.ref_elev, 
             ST_Difference(
                 ST_Buffer(c.geometry, bs.buffer_size + {DONUT_THICKNESS}), 
                 ST_Buffer(c.geometry, bs.buffer_size)
@@ -101,10 +142,10 @@ def query_relative_elevation_chunk(chunk: pd.DataFrame,
         SELECT 
             d.{C.ID_COL}, 
             d.buffer_size, 
-            AVG(CAST((a.val - d.ref_val) > +20 AS INT)) AS above_20,
-            AVG(CAST((a.val - d.ref_val) < -20 AS INT)) AS below_20,
-            AVG(CAST((a.val - d.ref_val) > +50 AS INT)) AS above_50,
-            AVG(CAST((a.val - d.ref_val) < -50 AS INT)) AS below_50
+            AVG(CAST((a.elev - d.ref_elev) > +20 AS INT)) AS above_20,
+            AVG(CAST((a.elev - d.ref_elev) < -20 AS INT)) AS below_20,
+            AVG(CAST((a.elev - d.ref_elev) > +50 AS INT)) AS above_50,
+            AVG(CAST((a.elev - d.ref_elev) < -50 AS INT)) AS below_50
         FROM 
             aoi_elevation AS a
         INNER JOIN 
@@ -122,45 +163,35 @@ def query_relative_elevation_chunk(chunk: pd.DataFrame,
     , result_rel_elev AS (
         SELECT 
             {C.ID_COL}, 
-            CONCAT( '{rel_elev_prefix}_', stat, '_', buffer_size::VARCHAR ) AS {C.VAR_COL}, 
+            varname_rel('{elevation_type}', stat, buffer_size) AS {C.VAR_COL}, 
             NULL AS {C.YEAR_COL}, 
             val AS {C.VAL_COL}
         FROM unpivoted
     )
-    , result_ref_elev AS (
-        SELECT 
-            {C.ID_COL}, 
-            '{ref_elev_prefix}' AS {C.VAR_COL}, 
-            NULL AS {C.YEAR_COL}, 
-            ref_val AS {C.VAL_COL}
-        FROM ref_elevation
-    )
-    , result AS (
-        SELECT * FROM result_rel_elev
-        UNION ALL
-        SELECT * FROM result_ref_elev
-    )
-    SELECT * FROM result
-    """).df()
+    SELECT * FROM result_rel_elev
+    """
+    result_rel_elev = conn.execute(query).df()
     # clear temporary table
-    conn.execute("DROP INDEX rtree_temp")
+    conn.execute("DROP INDEX IF EXISTS rtree_aoi_elevation")
     conn.execute("DROP TABLE IF EXISTS chunk")
-    conn.execute("DROP TABLE IF EXISTS aoi")
     conn.execute("DROP TABLE IF EXISTS aoi_elevation")
     conn.unregister('chunk_wkt')
     conn.unregister('buffer_size')
+    conn.unregister('ref_elevation')
     # done
+    result = pd.concat([result_rel_elev, result_ref_elev])
     return result
 
 
 @typechecked
-def relative_elevation_worker(task_queue,
-                              result_queue,
-                              db_path: str,
-                              table: str,
-                              buffer_sizes: list[float], 
-                              memory_limit: str = "4GB"):
-    conn = generate_duckdb_connection(db_path, memory_limit=memory_limit)
+def _worker(task_queue: mp.Queue,
+            result_queue: mp.Queue,
+            table: str,
+            buffer_sizes: list[float], 
+            table_path: str | Path,
+            memory_limit: str = "4GB"):
+    """worker loop"""
+    conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
     try:
         while True:
             try:
@@ -170,13 +201,14 @@ def relative_elevation_worker(task_queue,
                         result_queue.put(C.SENTINEL)
                         break
                 chunk = task  # pandas DataFrame [ID_COL, wkt]
-                res = query_relative_elevation_chunk(chunk, table, buffer_sizes, conn)
+                res = _query(chunk, table, buffer_sizes, table_path, conn)
                 result_queue.put((len(chunk), res))
             except queue.Empty:
                 continue
     finally:
         conn.close()
-    return
+        return
+
 
 class RelativeElevationCalculator:
 
@@ -218,10 +250,9 @@ class RelativeElevationCalculator:
         if isinstance(buffer_sizes, float):
             buffer_sizes = [buffer_sizes]
         # input check
-        valid_types = list(VALID_TABLE_VAR_NAME.keys())
-        is_valid_elevation = all(et in valid_types for et in elevation_types)
+        is_valid_elevation = all(et in VALID_ELEVATION_TYPES for et in elevation_types)
         if not is_valid_elevation:
-            raise ValueError(f"Invalid elevation type. Valid types are: {valid_types}")
+            raise ValueError(f"Invalid elevation type. Valid types are: {VALID_ELEVATION_TYPES}")
         # perform calculations
         results = []
         for elevation_type in elevation_types:
@@ -231,9 +262,10 @@ class RelativeElevationCalculator:
             task_queue = mp.Queue()
             result_queue = mp.Queue()
             workers = []
+            table_path = (self.db_path / table).with_suffix(f".parquet")
             for _ in range(self.n_workers):
-                args = (task_queue, result_queue, self.db_path, table, buffer_sizes, self.memory_limit)
-                p = mp.Process(target=relative_elevation_worker, args=args)
+                args = (task_queue, result_queue, table, buffer_sizes, table_path, self.memory_limit)
+                p = mp.Process(target=_worker, args=args)
                 p.start()
                 workers.append(p)
             # enqueue chunk tasks
@@ -243,7 +275,7 @@ class RelativeElevationCalculator:
             for _ in range(self.n_workers):
                 task_queue.put(C.SENTINEL)
             # aggregate results with progress by chunk size
-            description = f"{VALID_TABLE_VAR_NAME[table]} (buffer_sizes: {buffer_sizes})"
+            description = TQDM_DESC(table, buffer_sizes)
             tq = tqdm(total=len(self.geom_df), bar_format=C.TQDM_BAR_FORMAT, desc=description, disable=not self.verbose)
             n_alive_workers = self.n_workers
             while n_alive_workers > 0:
