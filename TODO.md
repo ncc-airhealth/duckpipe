@@ -1,5 +1,11 @@
 # TODO list
 
+## feature
+- [ ] Object storage based calculation
+- [ ] Pure duckdb based calculation
+- [ ] area(polygon) based calculation
+- [ ] administrative division data support
+- [ ] administrative division code normalization
 
 ### intersection (polygon & polygon)
 - [x] Landuse
