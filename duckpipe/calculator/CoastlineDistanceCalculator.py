@@ -151,7 +151,7 @@ class CoastlineDistanceCalculator:
                 task_queue.put(C.SENTINEL)
             # aggregate results with progress by chunk size
             description = TQDM_DESC(year)
-            tq = tqdm(total=len(self.geom_df), bar_format=C.TQDM_BAR_FORMAT, desc=description, disable=not self.verbose)
+            tq = tqdm(total=len(self.wkt_df), bar_format=C.TQDM_BAR_FORMAT, desc=description, disable=not self.verbose)
             n_alive_workers = self.n_workers
             while n_alive_workers > 0:
                 result = result_queue.get()

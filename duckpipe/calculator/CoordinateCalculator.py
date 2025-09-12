@@ -42,61 +42,44 @@ def query_coordinate_chunk(chunk: pd.DataFrame,
     coord_func = SUPPORTED_MODE_FUNCS[mode]
     # register chunk
     conn.register('chunk_wkt', chunk)
+    # query
     query = f"""
     WITH 
-    raw_coords AS (
+    geom_tbl AS (
         SELECT 
             {C.ID_COL}, 
-            ST_Point(
-                ST_Y({coord_func}(ST_GeomFromText(wkt))), -- EPSG 5179 X/Y flipped
-                ST_X({coord_func}(ST_GeomFromText(wkt)))  -- EPSG 5179 X/Y flipped
-            ) AS geometry
+            {coord_func}(ST_GeomFromText(wkt)) AS centroid
         FROM chunk_wkt
-    ),
-    gcs_xcoords AS (
-        SELECT 
-            {C.ID_COL}, 
-            '{GCS_VAR_X}' AS {C.VAR_COL}, 
-            NULL AS {C.YEAR_COL}, 
-            ST_Y( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{GCS_EPSG}') ) AS {C.VAL_COL}
-        FROM raw_coords
-    ),
-    gcs_ycoords AS (
-        SELECT 
-            {C.ID_COL}, 
-            '{GCS_VAR_Y}' AS {C.VAR_COL}, 
-            NULL AS {C.YEAR_COL}, 
-            ST_X( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{GCS_EPSG}') ) AS {C.VAL_COL}
-        FROM raw_coords
-    ),
-    pcs_xcoords AS (
-        SELECT 
-            {C.ID_COL}, 
-            '{PCS_VAR_X}' AS {C.VAR_COL}, 
-            NULL AS {C.YEAR_COL}, 
-            ST_Y( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{PCS_EPSG}') ) AS {C.VAL_COL}
-        FROM raw_coords
     ), 
-    pcs_ycoords AS (
+    coord_tbl AS (
         SELECT 
             {C.ID_COL}, 
-            '{PCS_VAR_Y}' AS {C.VAR_COL}, 
-            NULL AS {C.YEAR_COL}, 
-            ST_X( ST_Transform(geometry, 'EPSG:{C.REF_EPSG}', 'EPSG:{PCS_EPSG}') ) AS {C.VAL_COL}
-        FROM raw_coords
-    ),
-    coords AS (
-        SELECT * FROM gcs_xcoords
-        UNION ALL
-        SELECT * FROM gcs_ycoords
-        UNION ALL
-        SELECT * FROM pcs_xcoords
-        UNION ALL
-        SELECT * FROM pcs_ycoords
+            ST_X(centroid) AS {PCS_VAR_X}, 
+            ST_Y(centroid) AS {PCS_VAR_Y}, 
+            ST_X(ST_Transform(
+                ST_FlipCoordinates(centroid), 
+                'EPSG:{C.REF_EPSG}', 
+                'EPSG:{GCS_EPSG}', 
+                always_xy := true
+            )) AS {GCS_VAR_X}, 
+            ST_Y(ST_Transform(
+                ST_FlipCoordinates(centroid), 
+                'EPSG:{C.REF_EPSG}', 
+                'EPSG:{GCS_EPSG}', 
+                always_xy := true
+            )) AS {GCS_VAR_Y}
+        FROM geom_tbl
+    ), 
+    result AS (
+        SELECT *
+        FROM coord_tbl
+        UNPIVOT ( {C.VAL_COL} FOR {C.VAR_COL} IN ({GCS_VAR_X}, {GCS_VAR_Y}, {PCS_VAR_X}, {PCS_VAR_Y}) )
     )
-    SELECT * FROM coords
+    SELECT * FROM 
+    result
     """
     df = conn.execute(query).df()
+    # result
     conn.unregister('chunk_wkt')
     return df
 
@@ -173,7 +156,7 @@ class CoordinateCalculator:
             task_queue.put(C.SENTINEL)
         # aggregate results with progress by chunk size
         description = TQDM_DESC(mode)
-        tq = tqdm(total=len(self.geom_df), bar_format=C.TQDM_BAR_FORMAT, desc=description, disable=not self.verbose)
+        tq = tqdm(total=len(self.wkt_df), bar_format=C.TQDM_BAR_FORMAT, desc=description, disable=not self.verbose)
         n_alive_workers = self.n_workers
         while n_alive_workers > 0:
             result = result_queue.get()

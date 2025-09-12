@@ -1,4 +1,3 @@
-import geopandas as gpd
 import pandas as pd
 import numpy as np
 from scipy.cluster.hierarchy import linkage, fcluster
@@ -66,37 +65,41 @@ class Clustering:
         ```
         """
         # call geometry
-        nrows = len(self.geom_df)
+        nrows = len(self.wkt_df)
         if nrows == 0:
             self.chunks = []
             return self
         elif nrows == 1:
-            self.chunks = [self.geom_df[[C.ID_COL, "wkt"]]]
+            self.chunks = [self.wkt_df[[C.ID_COL, "wkt"]]]
             return self
         # preprocessing
-        id_sr = self.geom_df.loc[:, C.ID_COL]
-        wkt_sr = self.geom_df.loc[:, "wkt"]
-        geom_sr = gpd.GeoSeries.from_wkt(wkt_sr).set_crs(C.REF_EPSG, allow_override=True)
-        centroid_sr = geom_sr.centroid
-        x_sr = centroid_sr.x
-        y_sr = centroid_sr.y
+        self.conn.register("wkt_df", self.wkt_df)
+        query = f"""
+        SELECT 
+            {C.ID_COL}, 
+            ST_X(ST_Centroid(ST_GeomFromText(wkt))) AS x,
+            ST_Y(ST_Centroid(ST_GeomFromText(wkt))) AS y
+        FROM wkt_df
+        """
+        centroid_df = self.conn.execute(query).df()
+        self.conn.unregister('wkt_df')
         # clustering
         self.chunks = []
         tq = tqdm(total=nrows, bar_format=C.TQDM_BAR_FORMAT, desc="chunking", disable=not self.verbose)
         for idx0 in range(0, nrows, max_rows):
             # dividing for memory efficiency 
             idx1 = min(idx0 + max_rows, nrows)
-            id_sr_sel = id_sr.iloc[idx0:idx1]
-            wkt_sr_sel = wkt_sr.iloc[idx0:idx1]
-            x_arr = x_sr.iloc[idx0:idx1].to_numpy()
-            y_arr = y_sr.iloc[idx0:idx1].to_numpy()
+            id_sr = self.wkt_df.loc[idx0:idx1, C.ID_COL]
+            wkt_sr = self.wkt_df.loc[idx0:idx1, "wkt"]
+            x_arr = centroid_df.loc[idx0:idx1, "x"].to_numpy()
+            y_arr = centroid_df.loc[idx0:idx1, "y"].to_numpy()
             # feature
             X = np.column_stack([x_arr, y_arr])
             Z = linkage(X, method="complete", metric="euclidean")
             labels = fcluster(Z, t=distance_threshold, criterion="distance") - 1
             cdf = pd.DataFrame({
-                C.ID_COL: id_sr_sel,
-                "wkt": wkt_sr_sel,
+                C.ID_COL: id_sr,
+                "wkt": wkt_sr,
                 "cluster": labels,
             })
             # chunking
@@ -133,7 +136,7 @@ class Clustering:
         ```
         """
         # call geometry
-        cdf = self.geom_df.loc[:, [C.ID_COL, "wkt"]]
+        cdf = self.wkt_df.loc[:, [C.ID_COL, "wkt"]]
         # clustering
         chunks = [
             cdf.iloc[i:i + max_cluster_size]
@@ -161,16 +164,18 @@ class Clustering:
         ```
         """
         # call geometry
-        cdf = self.geom_df.loc[:, [C.ID_COL, "wkt"]]
+        self.conn.register("wkt_df", self.wkt_df)
+        query = """
+        SELECT *
+        FROM wkt_df
+        ORDER BY ST_Hilbert(ST_GeomFromText(wkt))
+        """
+        hilbert_df = self.conn.execute(query).df()
+        self.conn.unregister('wkt_df')
         # clustering
-        geom_sr = gpd.GeoSeries.from_wkt(cdf["wkt"]).set_crs(C.REF_EPSG, allow_override=True)
-        centroid = geom_sr.centroid
-        cdf["hilbert_distance"] = centroid.hilbert_distance()
-        cdf.sort_values(by="hilbert_distance", inplace=True)
-        cdf.drop(columns=["hilbert_distance"], inplace=True)
         chunks = [
-            cdf.iloc[i:i + max_cluster_size]
-            for i in range(0, len(cdf), max_cluster_size)
+            hilbert_df.iloc[i:i + max_cluster_size]
+            for i in range(0, len(hilbert_df), max_cluster_size)
         ]
         self.chunks = chunks
         # end
