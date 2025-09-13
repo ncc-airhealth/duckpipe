@@ -77,18 +77,14 @@ def _query(chunk: pd.DataFrame,
         )
         , filtered AS (
             SELECT 
-                ST_MakeEnvelope(a.xmin, a.ymin, a.xmax, a.ymax) AS geometry,
-                a.xmin,
-                a.ymin,
-                a.xmax,
-                a.ymax,
+                ST_MakeEnvelope(t.xmin, t.ymin, t.xmax, t.ymax) AS geometry,
                 COALESCE(t.value, 0) AS elev
             FROM '{table_path}' AS t, aoi AS a
             WHERE  
                 t.xmin BETWEEN a.xmin AND a.xmax AND
                 t.ymin BETWEEN a.ymin AND a.ymax
         )
-        SELECT elev, xmin, ymin, xmax, ymax, geometry
+        SELECT elev, geometry
         FROM filtered
         WHERE NOT ST_IsEmpty(geometry)
     );

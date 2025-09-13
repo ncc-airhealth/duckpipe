@@ -91,13 +91,11 @@ class Calculator(Clustering,
         SELECT
             ROW_NUMBER() OVER () AS {C.ID_COL}, 
             ST_AsText(
-                ST_FlipCoordinates(
-                    ST_Transform(
-                        ST_Point({x_col}, {y_col}), 
-                        'EPSG:{epsg}', 
-                        'EPSG:{C.REF_EPSG}', 
-                        always_xy := true
-                    )
+                ST_Transform(
+                    ST_Point({x_col}, {y_col}), 
+                    'EPSG:{epsg}', 
+                    'EPSG:{C.REF_EPSG}', 
+                    always_xy := true
                 )
             ) AS wkt
         FROM input_df

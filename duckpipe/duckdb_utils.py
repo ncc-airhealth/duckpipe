@@ -1,11 +1,18 @@
 import duckdb
+import os
 from duckdb import DuckDBPyConnection
 from typeguard import typechecked
 from pathlib import Path
 from duckpipe.common import *
+from dotenv import load_dotenv
 
+load_dotenv()
 
 DUCKDB_EXTENSIONS = ["spatial", "httpfs"]
+R2_S3_ACCESS_KEY_ID = os.getenv("R2_S3_ACCESS_KEY_ID")
+R2_S3_SECRET_ACCESS_KEY = os.getenv("R2_S3_SECRET_ACCESS_KEY")
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
+
 
 @typechecked
 def install_duckdb_extensions():
@@ -28,8 +35,11 @@ def install_duckdb_extensions():
     """
     conn = duckdb.connect()
     for ext in DUCKDB_EXTENSIONS:
-        conn.execute(f"INSTALL {ext}")
-        conn.execute(f"LOAD {ext}")
+        try:
+            conn.execute(f"LOAD {ext}")
+        except Exception:
+            conn.execute(f"INSTALL {ext}")
+            conn.execute(f"LOAD {ext}")
     conn.close()
     return
 

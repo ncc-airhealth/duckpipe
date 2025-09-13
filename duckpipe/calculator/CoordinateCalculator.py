@@ -57,13 +57,13 @@ def query_coordinate_chunk(chunk: pd.DataFrame,
             ST_X(centroid) AS {PCS_VAR_X}, 
             ST_Y(centroid) AS {PCS_VAR_Y}, 
             ST_X(ST_Transform(
-                ST_FlipCoordinates(centroid), 
+                centroid, 
                 'EPSG:{C.REF_EPSG}', 
                 'EPSG:{GCS_EPSG}', 
                 always_xy := true
             )) AS {GCS_VAR_X}, 
             ST_Y(ST_Transform(
-                ST_FlipCoordinates(centroid), 
+                centroid, 
                 'EPSG:{C.REF_EPSG}', 
                 'EPSG:{GCS_EPSG}', 
                 always_xy := true
