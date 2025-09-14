@@ -54,6 +54,7 @@ def query_coordinate_chunk(chunk: pd.DataFrame,
     coord_tbl AS (
         SELECT 
             {C.ID_COL}, 
+            NULL AS {C.YEAR_COL}, 
             ST_X(centroid) AS {PCS_VAR_X}, 
             ST_Y(centroid) AS {PCS_VAR_Y}, 
             ST_X(ST_Transform(

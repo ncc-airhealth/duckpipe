@@ -41,10 +41,11 @@ def _query(chunk: pd.DataFrame,
     """)
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE result_skeleton AS (
+        WITH codes AS (
+            SELECT DISTINCT code FROM '{table_path}'
+        )
         SELECT DISTINCT c.{C.ID_COL}, t.code, bs.buffer_size
-        FROM '{table_path}' AS t
-        CROSS JOIN chunk_wkt AS c
-        CROSS JOIN buffer_size AS bs
+        FROM codes AS t, chunk_wkt AS c, buffer_size AS bs
         ORDER BY c.{C.ID_COL}, t.code, bs.buffer_size
     )
     """)
@@ -58,9 +59,12 @@ def _query(chunk: pd.DataFrame,
                 MIN(ST_YMin(geometry)) - {max_buffer_size} AS ymin, 
                 MAX(ST_XMax(geometry)) + {max_buffer_size} AS xmax, 
                 MAX(ST_YMax(geometry)) + {max_buffer_size} AS ymax, 
-                ST_Envelope(ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size})) AS geometry
+                ST_Envelope(ST_Buffer(
+                    ST_Union_Agg(geometry), 
+                    {max_buffer_size}, 
+                    num_triangles := 1
+                )) AS geometry
             FROM chunk 
-            GROUP BY GROUPING SETS (())
         ), 
         filtered AS (
             SELECT 
@@ -69,17 +73,17 @@ def _query(chunk: pd.DataFrame,
             FROM 
                 '{table_path}' AS t, aoi AS a
             WHERE 
-                t.xmin <= a.xmax AND 
-                t.xmax >= a.xmin AND 
-                t.ymin <= a.ymax AND 
-                t.ymax >= a.ymin
+                t.xmin < a.xmax AND 
+                t.xmax > a.xmin AND 
+                t.ymin < a.ymax AND 
+                t.ymax > a.ymin
         )
-        SELECT code, geometry
+        SELECT *
         FROM filtered
         WHERE NOT ST_IsEmpty(geometry)
     );
-    CREATE INDEX rtree_aoi_landuse ON aoi_landuse
-    USING RTREE (geometry) WITH (max_node_capacity = 4);
+    --CREATE INDEX rtree_aoi_landuse ON aoi_landuse
+    -- USING RTREE (geometry) WITH (max_node_capacity = 4);
     """
     conn.execute(query)
     # main query
@@ -89,8 +93,10 @@ def _query(chunk: pd.DataFrame,
         SELECT 
             c.{C.ID_COL} AS {C.ID_COL}, 
             bs.buffer_size AS buffer_size, 
+            ST_Area(ST_Buffer(c.geometry, bs.buffer_size)) AS area, 
             ST_Buffer(c.geometry, bs.buffer_size) AS geometry
-        FROM chunk AS c CROSS JOIN buffer_size AS bs
+        FROM 
+            chunk AS c, buffer_size AS bs
     ), 
     aggregated AS (
         SELECT
@@ -98,7 +104,7 @@ def _query(chunk: pd.DataFrame,
             a.buffer_size AS buffer_size, 
             CAST(l.code AS VARCHAR) AS lu_code, 
             SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) ) AS a, 
-            SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) / ST_Area(a.geometry) ) AS p
+            SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) / a.area ) AS p
         FROM 
             aoi_landuse AS l 
         INNER JOIN 
@@ -149,7 +155,7 @@ def _query(chunk: pd.DataFrame,
     conn.execute("DROP TABLE IF EXISTS aoi_landuse")
     conn.unregister('chunk_wkt')
     conn.unregister('buffer_size')
-    conn.unregister('lu_codes')
+    conn.unregister('result_skeleton')
     return result
 
 

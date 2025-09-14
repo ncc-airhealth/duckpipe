@@ -73,16 +73,18 @@ def _query(chunk: pd.DataFrame,
                 MAX(ST_XMax(geometry)) + {clip_distance} AS xmax,
                 MAX(ST_YMax(geometry)) + {clip_distance} AS ymax
             FROM chunk
-            GROUP BY GROUPING SETS (())
         )
         , filtered AS (
             SELECT 
                 ST_MakeEnvelope(t.xmin, t.ymin, t.xmax, t.ymax) AS geometry,
                 COALESCE(t.value, 0) AS elev
-            FROM '{table_path}' AS t, aoi AS a
-            WHERE  
-                t.xmin BETWEEN a.xmin AND a.xmax AND
-                t.ymin BETWEEN a.ymin AND a.ymax
+            FROM '{table_path}' AS t
+            INNER JOIN aoi AS a
+            ON 
+                t.xmin > a.xmin AND 
+                t.xmax < a.xmax AND 
+                t.ymin > a.ymin AND 
+                t.ymax < a.ymax
         )
         SELECT elev, geometry
         FROM filtered
@@ -90,9 +92,12 @@ def _query(chunk: pd.DataFrame,
     );
     CREATE INDEX rtree_aoi_elevation ON aoi_elevation
     USING RTREE (geometry) 
-    WITH (max_node_capacity = 16);
+    WITH (max_node_capacity = 4);
     """
     conn.execute(query)
+    _df = conn.execute("SELECT * FROM aoi_elevation").df()
+    if _df.empty:
+        raise ValueError("No elevation data found")
     # find reference elevation
     query = f"""
     CREATE OR REPLACE TEMP TABLE ref_elevation AS (
