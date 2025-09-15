@@ -73,26 +73,26 @@ class Clustering:
             self.chunks = [self.wkt_df[[C.ID_COL, "wkt"]]]
             return self
         # preprocessing
-        self.conn.register("wkt_df", self.wkt_df)
+        self.conn.register("wkt_tbl", self.wkt_df)
         query = f"""
         SELECT 
             {C.ID_COL}, 
             ST_X(ST_Centroid(ST_GeomFromText(wkt))) AS x,
             ST_Y(ST_Centroid(ST_GeomFromText(wkt))) AS y
-        FROM wkt_df
+        FROM wkt_tbl
         """
         centroid_df = self.conn.execute(query).df()
-        self.conn.unregister('wkt_df')
+        self.conn.unregister('wkt_tbl')
         # clustering
         self.chunks = []
         tq = tqdm(total=nrows, bar_format=C.TQDM_BAR_FORMAT, desc="chunking", disable=not self.verbose)
         for idx0 in range(0, nrows, max_rows):
             # dividing for memory efficiency 
             idx1 = min(idx0 + max_rows, nrows)
-            id_sr = self.wkt_df.loc[idx0:idx1, C.ID_COL]
-            wkt_sr = self.wkt_df.loc[idx0:idx1, "wkt"]
-            x_arr = centroid_df.loc[idx0:idx1, "x"].to_numpy()
-            y_arr = centroid_df.loc[idx0:idx1, "y"].to_numpy()
+            id_sr = self.wkt_df.iloc[idx0:idx1][C.ID_COL]
+            wkt_sr = self.wkt_df.iloc[idx0:idx1]["wkt"]
+            x_arr = centroid_df.iloc[idx0:idx1]["x"].to_numpy()
+            y_arr = centroid_df.iloc[idx0:idx1]["y"].to_numpy()
             # feature
             X = np.column_stack([x_arr, y_arr])
             Z = linkage(X, method="complete", metric="euclidean")
