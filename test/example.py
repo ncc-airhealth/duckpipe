@@ -2,34 +2,30 @@ if __name__ == "__main__":
 
     import sys; sys.path.append("./")
     import pandas as pd
-    import geopandas as gpd
-    import duckpipe as dp
+    from duckpipe import Calculator
 
-    DB_PATH = "example.duckdb"
-    TABLE_PATH = "example.csv"
+    # params
+    DB_PATH = "/DIRECTORY/TO/PARQUET/FILES/"
+    TABLE_PATH = 'data/sample_point_korea.csv'
     X_COLUMN = "longitude"
     Y_COLUMN = "latitude"
     ID_COLUMN = "id"
-    EPSG=4326
+    EPSG = 4326
     MAX_CLUSTER_SIZE = 100
     MAX_CLUSTER_WIDTH = 10000
+    SAMPLE_SIZE = 1_000
     
-    df = pd.read_csv(TABLE_PATH)
-    geometry = gpd.points_from_xy(df[X_COLUMN], df[Y_COLUMN])
-    gdf = (
-        gpd.GeoDataFrame(df, geometry=geometry, crs=EPSG)
-        .loc[:, [ID_COLUMN, "geometry"]]
-        .iloc[:100]
-    )
-
+    # load data, year setting
+    df = pd.read_csv(TABLE_PATH).iloc[:SAMPLE_SIZE]
     years = [2000, 2005, 2010, 2015, 2020]
-    db_path = DB_PATH
-
-    calculator = dp.Calculator(db_path=db_path, n_workers=2, memory_limit="6GB")
+    
+    # calculate
+    calculator = Calculator(db_path=DB_PATH, n_workers=8, memory_limit="4GB")
     geovariable = (
         calculator
-        .set_dataframe(gdf)
+        .add_point_with_table(df, x_col=X_COLUMN, y_col=Y_COLUMN, epsg=EPSG)
         .chunk_by_centroid(max_cluster_size=MAX_CLUSTER_SIZE, distance_threshold=MAX_CLUSTER_WIDTH)
+        .calculate_coordinate()
         .calculate_airport_distance(years=years)
         .calculate_coastline_distance(years=years)
         .calculate_landuse_area_ratio(years=years, buffer_sizes=[100, 300, 500, 1000, 5000])
@@ -37,8 +33,6 @@ if __name__ == "__main__":
         .get_result(pivot=True)
     )
     print(geovariable)
-
-    geovariable.to_csv("example_result.csv", index=False)
 
     
 
