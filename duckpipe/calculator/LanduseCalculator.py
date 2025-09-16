@@ -71,8 +71,8 @@ def _query(chunk: pd.DataFrame,
                 ST_Intersection(t.geometry, a.geometry) AS geometry,
                 code
             FROM 
-                '{table_path}' AS t, aoi AS a
-            WHERE 
+                aoi AS a
+            INNER JOIN '{table_path}' AS t ON
                 t.xmin < a.xmax AND 
                 t.xmax > a.xmin AND 
                 t.ymin < a.ymax AND 
@@ -82,8 +82,8 @@ def _query(chunk: pd.DataFrame,
         FROM filtered
         WHERE NOT ST_IsEmpty(geometry)
     );
-    --CREATE INDEX rtree_aoi_landuse ON aoi_landuse
-    -- USING RTREE (geometry) WITH (max_node_capacity = 4);
+    CREATE INDEX rtree_aoi_landuse ON aoi_landuse
+    USING RTREE (geometry) WITH (max_node_capacity = 4);
     """
     conn.execute(query)
     # main query
@@ -106,13 +106,13 @@ def _query(chunk: pd.DataFrame,
             SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) ) AS a, 
             SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) / a.area ) AS p
         FROM 
-            aoi_landuse AS l 
-        INNER JOIN 
-            aoi AS a ON ST_Intersects(l.geometry, a.geometry)
+            aoi_landuse AS l
+        INNER JOIN aoi AS a 
+            ON ST_Intersects(l.geometry, a.geometry)
         GROUP BY 
-            a.{C.ID_COL}, 
-            a.buffer_size, 
-            l.code
+            a.{C.ID_COL},
+            l.code,  
+            a.buffer_size
     ), 
     aggregated_filled AS (
         SELECT

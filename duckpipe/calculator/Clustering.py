@@ -73,6 +73,7 @@ class Clustering:
             self.chunks = [self.wkt_df[[C.ID_COL, "wkt"]]]
             return self
         # preprocessing
+
         self.conn.register("wkt_tbl", self.wkt_df)
         query = f"""
         SELECT 
