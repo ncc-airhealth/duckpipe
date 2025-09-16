@@ -11,7 +11,7 @@ import duckpipe.common as C
 from duckpipe.duckdb_utils import generate_duckdb_memory_connection
 
 DONUT_THICKNESS = 30
-DEM_SPATIAL_RESOLUTION = 90
+DEM_SPATIAL_RESOLUTION = 30
 VALID_ELEVATION_TYPES = ["dem", "dsm"]
 VAR_NAME_MACRO_REL = """
 CREATE OR REPLACE MACRO varname_rel(elev_type, stat, buffer_size) AS
@@ -33,7 +33,8 @@ CREATE OR REPLACE MACRO varname_ref(elev_type) AS
         ELSE 'error_processing_relative_elevation'
     END
 """
-TQDM_DESC = lambda elev_type, buffer_sizes: f"Relative elevation ({elev_type}) (buffer_sizes: {buffer_sizes})"
+def TQDM_DESC(elev_type, buffer_sizes):
+    return f"Relative elevation ({elev_type}) (buffer_sizes: {buffer_sizes})"
 
 
 def _query(chunk: pd.DataFrame,
@@ -72,16 +73,18 @@ def _query(chunk: pd.DataFrame,
                 MAX(ST_XMax(geometry)) + {clip_distance} AS xmax,
                 MAX(ST_YMax(geometry)) + {clip_distance} AS ymax
             FROM chunk
-            GROUP BY GROUPING SETS (())
         )
         , filtered AS (
             SELECT 
-                t.geometry AS geometry,
-                t.value AS elev
-            FROM '{table_path}' AS t, aoi AS a
-            WHERE 
-                t.centroid_x BETWEEN a.xmin AND a.xmax AND
-                t.centroid_y BETWEEN a.ymin AND a.ymax
+                ST_MakeEnvelope(t.xmin, t.ymin, t.xmax, t.ymax) AS geometry,
+                COALESCE(t.value, 0) AS elev
+            FROM '{table_path}' AS t
+            INNER JOIN aoi AS a
+            ON 
+                t.xmin > a.xmin AND 
+                t.xmax < a.xmax AND 
+                t.ymin > a.ymin AND 
+                t.ymax < a.ymax
         )
         SELECT elev, geometry
         FROM filtered
@@ -92,6 +95,9 @@ def _query(chunk: pd.DataFrame,
     WITH (max_node_capacity = 4);
     """
     conn.execute(query)
+    _df = conn.execute("SELECT * FROM aoi_elevation").df()
+    if _df.empty:
+        raise ValueError("No elevation data found")
     # find reference elevation
     query = f"""
     CREATE OR REPLACE TEMP TABLE ref_elevation AS (
@@ -106,9 +112,6 @@ def _query(chunk: pd.DataFrame,
         GROUP BY 
             c.{C.ID_COL}
     );
-    """
-    conn.execute(query)
-    query = f"""
     SELECT 
         {C.ID_COL}, 
         varname_ref('{elevation_type}') AS {C.VAR_COL}, 
@@ -192,22 +195,20 @@ def _worker(task_queue: mp.Queue,
             memory_limit: str = "4GB"):
     """worker loop"""
     conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
-    try:
-        while True:
-            try:
-                task = task_queue.get(timeout=0.1)
-                if isinstance(task, str):
-                    if task == C.SENTINEL:
-                        result_queue.put(C.SENTINEL)
-                        break
-                chunk = task  # pandas DataFrame [ID_COL, wkt]
-                res = _query(chunk, table, buffer_sizes, table_path, conn)
-                result_queue.put((len(chunk), res))
-            except queue.Empty:
-                continue
-    finally:
-        conn.close()
-        return
+    while True:
+        try:
+            task = task_queue.get(timeout=0.1)
+            if isinstance(task, str):
+                if task == C.SENTINEL:
+                    result_queue.put(C.SENTINEL)
+                    break
+            chunk = task  # pandas DataFrame [ID_COL, wkt]
+            res = _query(chunk, table, buffer_sizes, table_path, conn)
+            result_queue.put((len(chunk), res))
+        except queue.Empty:
+            continue
+    conn.close()
+    return
 
 
 class RelativeElevationCalculator:
@@ -276,7 +277,7 @@ class RelativeElevationCalculator:
                 task_queue.put(C.SENTINEL)
             # aggregate results with progress by chunk size
             description = TQDM_DESC(table, buffer_sizes)
-            tq = tqdm(total=len(self.geom_df), bar_format=C.TQDM_BAR_FORMAT, desc=description, disable=not self.verbose)
+            tq = tqdm(total=len(self.wkt_df), bar_format=C.TQDM_BAR_FORMAT, desc=description, disable=not self.verbose)
             n_alive_workers = self.n_workers
             while n_alive_workers > 0:
                 result = result_queue.get()

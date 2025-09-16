@@ -1,4 +1,3 @@
-import geopandas as gpd
 import pandas as pd
 from typeguard import typechecked
 from typing import Self
@@ -12,7 +11,7 @@ from duckpipe.calculator.LanduseCalculator import LanduseCalculator
 from duckpipe.calculator.AirportDistanceCalculator import AirportDistanceCalculator
 from duckpipe.calculator.CoastlineDistanceCalculator import CoastlineDistanceCalculator
 from duckpipe.calculator.RelativeElevationCalculator import RelativeElevationCalculator
-from duckpipe.duckdb_utils import generate_duckdb_connection, install_duckdb_extensions, generate_duckdb_memory_connection
+from duckpipe.duckdb_utils import install_duckdb_extensions, generate_duckdb_memory_connection
 
 
 
@@ -76,39 +75,42 @@ class Calculator(Clustering,
         install_duckdb_extensions()
         self.conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
         self.start_time = datetime.now()
+        self.wkt_df = pd.DataFrame()
+        self.attr_df = pd.DataFrame()
 
     @typechecked
-    def set_dataframe(self, gdf: gpd.GeoDataFrame) -> Self:
+    def add_point_with_table(self, 
+                            df: pd.DataFrame, 
+                            x_col: str = 'longitude', 
+                            y_col: str = 'latitude', 
+                            epsg: int = 4326) -> Self:
+        # register input df
+        self.conn.register('input_df', df)
+        # geometry df
+        query = f"""
+        SELECT
+            ROW_NUMBER() OVER () AS {C.ID_COL}, 
+            ST_AsText(
+                ST_Transform(
+                    ST_Point({x_col}, {y_col}), 
+                    'EPSG:{epsg}', 
+                    'EPSG:{C.REF_EPSG}', 
+                    always_xy := true
+                )
+            ) AS wkt
+        FROM input_df
         """
-        [description]
-        Register the input GeoDataFrame, transform to the reference CRS, convert geometries to WKT
-        for DuckDB, sort by Hilbert distance for spatial locality, and pre-compute default chunks.
-
-        [input]
-        - gdf: geopandas.GeoDataFrame — Must contain a valid geometry column in EPSG:4326.
-
-        [output]
-        - Self — The same Calculator instance for method chaining.
-
-        [example usage]
-        ```python
-        calculator = dp.Calculator(db_path="path/to/parquet_dir")
-        calculator = calculator.set_dataframe(gdf)
-        ```
+        self.wkt_df = self.conn.execute(query).df()
+        # attribute df
+        query = f"""
+        SELECT 
+            ROW_NUMBER() OVER () AS {C.ID_COL}, 
+            *
+        FROM input_df
         """
-        # init.
-        self.gdf = gdf
-        self.geom_col = self.gdf.geometry.name
-        # prepare
-        self.gdf[C.ID_COL] = [str(i) for i in range(len(self.gdf))]
-        self.geom_df = self.gdf.loc[:, [C.ID_COL, self.geom_col]]
-        self.geom_df[self.geom_col] = self.geom_df[self.geom_col].to_crs(C.REF_EPSG)
-        # wkt, for duckdb compatibility
-        self.geom_df = (
-            self.geom_df
-            .assign(wkt=lambda df: df[self.geom_col].apply(lambda g: g.wkt))
-            .drop(columns=[self.geom_col])
-        )
+        self.attr_df = self.conn.execute(query).df()
+        # clean
+        self.conn.unregister('input_df')
         # chunking
         self.chunk_by_order(max_cluster_size=100)
         # result preparation
@@ -134,8 +136,7 @@ class Calculator(Clustering,
         ```
         """
         self.end_time = datetime.now()
-        result_df = self.result_df.copy()
-        result_df.sort_values(by=[C.ID_COL, C.YEAR_COL, C.VAR_COL], inplace=True)
+        result_df = self.result_df
         if pivot:
             result_df = result_df.pivot_table(
                 index=[C.ID_COL, C.YEAR_COL], 
@@ -147,9 +148,10 @@ class Calculator(Clustering,
             )
             result_df = result_df[sorted(result_df.columns)]
             result_df.reset_index(inplace=True)
+        else:
+            result_df.sort_values(by=[C.ID_COL, C.YEAR_COL, C.VAR_COL], inplace=True)
         result = (
-            self.gdf
-            .drop(columns=[self.geom_col])
+            self.attr_df
             .merge(result_df, on=C.ID_COL, how="left")
             .sort_values(by=[C.ID_COL, C.YEAR_COL])
             .drop(columns=[C.ID_COL])

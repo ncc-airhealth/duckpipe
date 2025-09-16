@@ -17,7 +17,8 @@ CREATE OR REPLACE MACRO varname(lu_code, buffer_size, stat_type) AS
     -- stat_type: a (area) or p (proportion)
     printf('%s%s_%04d_%s', 'LS', lu_code, buffer_size::INTEGER, stat_type)
 """
-TQDM_DESC = lambda year, buffer_sizes: f"Landuse ({year}) (buffer_sizes: {buffer_sizes})"
+def TQDM_DESC(year, buffer_sizes): 
+    return f"Landuse ({year}) (buffer_sizes: {buffer_sizes})"
 
 def _query(chunk: pd.DataFrame,
            year: int,
@@ -29,12 +30,23 @@ def _query(chunk: pd.DataFrame,
     # prepare
     conn.execute(VAR_NAME_MACRO)
     max_buffer_size = max(buffer_sizes)
-    # register chunk geometries
+    # prepare
     conn.register('chunk_wkt', chunk)
+    conn.register('buffer_size', pd.DataFrame({"buffer_size": buffer_sizes}))
     conn.execute(f"""
     CREATE OR REPLACE TEMP TABLE chunk AS (
         SELECT {C.ID_COL}, ST_GeomFromText(wkt) AS geometry
         FROM chunk_wkt
+    )
+    """)
+    conn.execute(f"""
+    CREATE OR REPLACE TEMP TABLE result_skeleton AS (
+        WITH codes AS (
+            SELECT DISTINCT code FROM '{table_path}'
+        )
+        SELECT DISTINCT c.{C.ID_COL}, t.code, bs.buffer_size
+        FROM codes AS t, chunk_wkt AS c, buffer_size AS bs
+        ORDER BY c.{C.ID_COL}, t.code, bs.buffer_size
     )
     """)
     # get aoi landuse table
@@ -47,23 +59,26 @@ def _query(chunk: pd.DataFrame,
                 MIN(ST_YMin(geometry)) - {max_buffer_size} AS ymin, 
                 MAX(ST_XMax(geometry)) + {max_buffer_size} AS xmax, 
                 MAX(ST_YMax(geometry)) + {max_buffer_size} AS ymax, 
-                ST_Envelope(ST_Buffer(ST_Union_Agg(geometry), {max_buffer_size})) AS geometry
+                ST_Envelope(ST_Buffer(
+                    ST_Union_Agg(geometry), 
+                    {max_buffer_size}, 
+                    num_triangles := 1
+                )) AS geometry
             FROM chunk 
-            GROUP BY GROUPING SETS (())
         ), 
         filtered AS (
             SELECT 
                 ST_Intersection(t.geometry, a.geometry) AS geometry,
                 code
             FROM 
-                '{table_path}' AS t, aoi AS a
-            WHERE 
-                t.xmin <= a.xmax AND 
-                t.xmax >= a.xmin AND 
-                t.ymin <= a.ymax AND 
-                t.ymax >= a.ymin
+                aoi AS a
+            INNER JOIN '{table_path}' AS t ON
+                t.xmin < a.xmax AND 
+                t.xmax > a.xmin AND 
+                t.ymin < a.ymax AND 
+                t.ymax > a.ymin
         )
-        SELECT code, geometry
+        SELECT *
         FROM filtered
         WHERE NOT ST_IsEmpty(geometry)
     );
@@ -72,42 +87,65 @@ def _query(chunk: pd.DataFrame,
     """
     conn.execute(query)
     # main query
-    conn.register('buffer_size', pd.DataFrame({"buffer_size": buffer_sizes}))
     query = f"""
     WITH 
     aoi AS (
         SELECT 
-            c.{C.ID_COL} AS {C.ID_COL}
-            , bs.buffer_size AS buffer_size
-            , ST_Buffer(c.geometry, bs.buffer_size) AS geometry
-        FROM chunk AS c CROSS JOIN buffer_size AS bs
-    )
-    , aggregated AS (
-        SELECT
-            a.{C.ID_COL} AS {C.ID_COL}
-            , a.buffer_size AS buffer_size
-            , CAST(l.code AS VARCHAR) AS lu_code
-            , SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) ) AS a
-            , SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) / ST_Area(a.geometry) ) AS p
+            c.{C.ID_COL} AS {C.ID_COL}, 
+            bs.buffer_size AS buffer_size, 
+            ST_Area(ST_Buffer(c.geometry, bs.buffer_size)) AS area, 
+            ST_Buffer(c.geometry, bs.buffer_size) AS geometry
         FROM 
-            aoi_landuse AS l INNER JOIN aoi AS a ON ST_Intersects(l.geometry, a.geometry)
-        GROUP BY a.{C.ID_COL}, a.buffer_size, l.code
-    )
-    , unpivoted AS (
+            chunk AS c, buffer_size AS bs
+    ), 
+    aggregated AS (
+        SELECT
+            a.{C.ID_COL} AS {C.ID_COL}, 
+            a.buffer_size AS buffer_size, 
+            CAST(l.code AS VARCHAR) AS lu_code, 
+            SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) ) AS a, 
+            SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) / a.area ) AS p
+        FROM 
+            aoi_landuse AS l
+        INNER JOIN aoi AS a 
+            ON ST_Intersects(l.geometry, a.geometry)
+        GROUP BY 
+            a.{C.ID_COL},
+            l.code,  
+            a.buffer_size
+    ), 
+    aggregated_filled AS (
+        SELECT
+            rs.{C.ID_COL}, 
+            rs.buffer_size, 
+            rs.code::VARCHAR AS lu_code, 
+            COALESCE(a.a, 0) AS a, 
+            COALESCE(a.p, 0) AS p
+        FROM 
+            aggregated AS a
+        RIGHT JOIN 
+            result_skeleton AS rs 
+        ON 
+            rs.{C.ID_COL} = a.{C.ID_COL} AND 
+            rs.code = a.lu_code AND 
+            rs.buffer_size = a.buffer_size
+    ), 
+    unpivoted AS (
         SELECT *
-        FROM aggregated
+        FROM aggregated_filled
         UNPIVOT ( val FOR stat_type IN (a, p) )
-    )
-    , renamed AS (
+    ), 
+    renamed AS (
         SELECT 
-            {C.ID_COL}
-            , varname(lu_code, buffer_size, stat_type) AS {C.VAR_COL}
-            , {year} AS {C.YEAR_COL}
-            , val AS {C.VAL_COL}
+            {C.ID_COL}, 
+            varname(lu_code, buffer_size, stat_type) AS {C.VAR_COL}, 
+            {year} AS {C.YEAR_COL}, 
+            val AS {C.VAL_COL} 
         FROM unpivoted
     )
     SELECT * 
     FROM renamed
+    ORDER BY {C.ID_COL}, {C.VAR_COL}
     """
     result = conn.execute(query).df()
     # clear temporary table
@@ -117,6 +155,7 @@ def _query(chunk: pd.DataFrame,
     conn.execute("DROP TABLE IF EXISTS aoi_landuse")
     conn.unregister('chunk_wkt')
     conn.unregister('buffer_size')
+    conn.unregister('result_skeleton')
     return result
 
 
@@ -222,7 +261,7 @@ class LanduseCalculator:
             task_queue = mp.Queue()
             result_queue = mp.Queue()
             workers = []
-            table_path = (self.db_path / f"landuse_{year}").with_suffix(f".parquet")
+            table_path = (self.db_path / f"landuse_{year}").with_suffix(".parquet")
             for _ in range(self.n_workers):
                 args = (task_queue, result_queue, year, buffer_sizes, table_path, self.memory_limit)
                 p = mp.Process(target=_worker, args=args)
@@ -236,7 +275,7 @@ class LanduseCalculator:
                 task_queue.put(C.SENTINEL)
             # aggregate results with progress by chunk size
             desc = TQDM_DESC(year, buffer_sizes)
-            tq = tqdm(total=len(self.geom_df), bar_format=C.TQDM_BAR_FORMAT, desc=desc, disable=not self.verbose)
+            tq = tqdm(total=len(self.wkt_df), bar_format=C.TQDM_BAR_FORMAT, desc=desc, disable=not self.verbose)
             n_alive_workers = self.n_workers
             while n_alive_workers > 0:
                 result = result_queue.get()
