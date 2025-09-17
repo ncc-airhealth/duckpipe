@@ -72,7 +72,7 @@ class AirportDistanceCalculator:
 
         [output]
         - Self — Returns self for method chaining. Appends rows to `self.result_df` with columns
-          [`C.ID_COL`, `C.VAR_COL`, `C.YEAR_COL`, `C.VAL_COL`].
+          [`id`, `varname`, `year`, `value`].
 
         [example usage]
         ```python

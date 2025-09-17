@@ -177,8 +177,7 @@ class LanduseCalculator:
         - buffer_sizes: float | list[float] | None — Buffer distances; if None, defaults to `[0]`.
 
         [output]
-        - Self — Returns self for chaining. Appends rows with [`C.ID_COL`, `C.VAR_COL`,
-          `C.YEAR_COL`, `C.VAL_COL`].
+        - Self — Returns self for chaining. Appends rows with [`id`, `varname`, `year`, `value`].
         """
         # normalize params
         years, buffer_sizes = _normalize_params(years, buffer_sizes)
@@ -189,3 +188,4 @@ class LanduseCalculator:
             desc = f"Landuse ({year}) (buffer_sizes: {buffer_sizes})"
             self.run_query_workers(pre_query, main_query, post_query, desc=desc)
         return self
+
