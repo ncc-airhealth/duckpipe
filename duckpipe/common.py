@@ -8,9 +8,9 @@ REF_EPSG = 5179
 DB_NAME = "main"
 
 YEAR_COL = "year"
-VAR_COL = "stat_alias"
+VAR_COL = "varname"
 VAL_COL = "value"
-ID_COL = "uuid_35ab93c72f484478a4cab4233aa3d434"
+ID_COL = "id"
 
 SENTINEL = "__END__"
 
