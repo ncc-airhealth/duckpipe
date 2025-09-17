@@ -11,6 +11,7 @@ from duckpipe.calculator.LanduseCalculator import LanduseCalculator
 from duckpipe.calculator.AirportDistanceCalculator import AirportDistanceCalculator
 from duckpipe.calculator.CoastlineDistanceCalculator import CoastlineDistanceCalculator
 from duckpipe.calculator.RelativeElevationCalculator import RelativeElevationCalculator
+from duckpipe.calculator.MainRoadDistanceCalculator import MainRoadDistanceCalculator
 from duckpipe.duckdb_utils import install_duckdb_extensions, generate_duckdb_memory_connection
 
 
@@ -21,6 +22,7 @@ class Calculator(Clustering,
                  LanduseCalculator, 
                  AirportDistanceCalculator, 
                  CoastlineDistanceCalculator, 
+                 MainRoadDistanceCalculator,
                  RelativeElevationCalculator, 
                  ):
     """
