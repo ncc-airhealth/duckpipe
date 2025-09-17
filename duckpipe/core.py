@@ -13,10 +13,12 @@ from duckpipe.calculator.AirportDistanceCalculator import AirportDistanceCalcula
 from duckpipe.calculator.CoastlineDistanceCalculator import CoastlineDistanceCalculator
 from duckpipe.calculator.RelativeElevationCalculator import RelativeElevationCalculator
 from duckpipe.calculator.MainRoadDistanceCalculator import MainRoadDistanceCalculator
+from duckpipe.calculator.RoadDistanceCalculator import RoadDistanceCalculator
+from duckpipe.calculator.RoadLLWCalculator import RoadLLWCalculator
 from duckpipe.duckdb_utils import install_duckdb_extensions, generate_duckdb_memory_connection
 
 
-UUID = "uuid_35ab93c72f484478a4cab4233aa3d434"
+UUID = "_35ab93c72f484478a4cab4233aa3d434"
 
 class Calculator(Worker, 
                  Clustering,
@@ -25,6 +27,8 @@ class Calculator(Worker,
                  AirportDistanceCalculator, 
                  CoastlineDistanceCalculator, 
                  MainRoadDistanceCalculator,
+                 RoadDistanceCalculator,
+                 RoadLLWCalculator,
                  RelativeElevationCalculator, 
                  ):
     """
@@ -150,13 +154,17 @@ class Calculator(Worker,
             result_df.reset_index(inplace=True)
         else:
             result_df.sort_values(by=["id", "year", "varname"], inplace=True)
+        
+        # merge
         result = (
             self.attr_df
-            .merge(result_df, left_on=UUID, right_on="id", how="left")
+            .merge(result_df, left_on=UUID, right_on="id", how="left", suffixes=("", "_"))
             .sort_values(by=[UUID, "year"])
             .drop(columns=[UUID])
             .reset_index(drop=True)
         )
+        if "id_" in result.columns:
+            result.drop(columns=["id_"], inplace=True)
         if self.verbose:
             print(f"Elapsed time: {self.end_time - self.start_time}")
         return result
