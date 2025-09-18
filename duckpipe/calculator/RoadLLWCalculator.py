@@ -96,7 +96,6 @@ def _generate_query(buffer_sizes: list[float], year: int, table_path: Path) -> T
         result AS (
             SELECT
                 id, 
-                buffer_size,
                 year,
                 varname(vartype, buffer_size) AS varname,
                 value

@@ -186,6 +186,6 @@ class LanduseCalculator:
             table_path = (self.data_dir / f"landuse_{year}").with_suffix(".parquet")
             pre_query, main_query, post_query = _generate_query(year, table_path, buffer_sizes)
             desc = f"Landuse ({year}) (buffer_sizes: {buffer_sizes})"
-            self.run_query_workers(pre_query, main_query, post_query, desc=desc)
+            self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)
         return self
 

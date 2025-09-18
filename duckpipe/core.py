@@ -16,7 +16,7 @@ from duckpipe.calculator.MainRoadDistanceCalculator import MainRoadDistanceCalcu
 from duckpipe.calculator.RoadDistanceCalculator import RoadDistanceCalculator
 from duckpipe.calculator.RoadLLWCalculator import RoadLLWCalculator
 from duckpipe.duckdb_utils import install_duckdb_extensions, generate_duckdb_memory_connection
-
+from duckpipe.calculator.Worker import WorkerMode
 
 UUID = "_35ab93c72f484478a4cab4233aa3d434"
 
@@ -55,7 +55,11 @@ class Calculator(Worker,
     ```
     """
     @typechecked
-    def __init__(self, data_dir: str | Path, n_workers: int=8, memory_limit: str="5GB", verbose=True):
+    def __init__(self, 
+                 data_dir: str | Path, 
+                 mode: WorkerMode | str=WorkerMode.CHUNKED_MULTI, 
+                 n_workers: int=8, 
+                 verbose: bool=True):
         """
         [description]
         Initialize the Calculator with an in-memory DuckDB connection and runtime configuration.
@@ -76,12 +80,12 @@ class Calculator(Worker,
         calculator = dp.Calculator(db_path="path/to/parquet_dir", n_workers=2, memory_limit="6GB")
         ```
         """
+        self.worker_mode = mode
         self.n_workers = n_workers
-        self.memory_limit = memory_limit
         self.verbose = verbose
         self.data_dir = Path(data_dir)
         install_duckdb_extensions()
-        self.conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
+        self.conn = generate_duckdb_memory_connection()
         self.start_time = datetime.now()
 
     @typechecked

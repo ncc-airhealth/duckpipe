@@ -177,5 +177,5 @@ class RelativeElevationCalculator:
             table_path = self.data_dir / f"{elev_type}.parquet"
             pre_query, main_query, post_query = _generate_query(elev_type, table_path, buffer_sizes)
             desc = f"Relative elevation ({elev_type}) (buffer_sizes: {buffer_sizes})"
-            self.run_query_workers(pre_query, main_query, post_query, desc=desc)
+            self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)
         return self
