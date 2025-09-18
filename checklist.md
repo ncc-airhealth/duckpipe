@@ -1,5 +1,12 @@
-# calculators
+# features
 
+- [ ] Cloud Data Support
+- [ ] remove pandas dependency
+- [ ] build test data & pytest-based pipeline 
+- [ ] improved clustering algorithm
+
+
+# calculators
 
 - [ ] Bus Stop Count (2023)
 - [ ] Rail Station Count
