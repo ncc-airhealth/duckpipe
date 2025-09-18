@@ -1,6 +1,7 @@
 """
-Main road distance calculator that computes per-feature minimum distances to main roads
-for requested types and years using DuckDB Spatial over geometry chunks.
+[description]
+Road distance calculator that computes per-feature minimum distances to roads
+for requested years using DuckDB Spatial over geometry chunks.
 """
 from typeguard import typechecked
 from typing import Self, Tuple
@@ -17,13 +18,7 @@ VAR_NAME_MACRO = """
 
 @typechecked
 def _normalize_params(years: int | list[int]) -> list[int]:
-    """
-    Normalize and validate `mr_types` and `years` arguments.
-
-    - years: int | list[int] — One or more target years.
-
-    - list[int] — Sorted, validated years.
-    """
+    """Normalize and validate years."""
     # normalize input type
     if isinstance(years, int):
         years =[years]
@@ -75,12 +70,16 @@ class RoadDistanceCalculator:
 
     def calculate_road_distance(self, years: int | list[int]) -> Self:
         """
-        Calculate per-feature minimum distance to main roads for one or more `years` using the standardized worker runner (`run_query_workers`).
+        [description]
+        Calculate per-feature minimum distance to roads for one or more years.
 
-        - years: int | list[int] — Year(s) to compute (must be in `VALID_YEARS`).
+        [input]
+        - years: int | list[int] — Year(s) to compute (in `VALID_YEARS`).
 
-        - Self — Returns self for chaining. Appends rows with [`id`, `varname`, `year`, `value`].
+        [output]
+        - Self — Appends rows to `self.result_df` and returns self.
 
+        [example usage]
         ```python
         calculator.calculate_road_distance(years=[2010, 2020])
         ```

@@ -1,3 +1,8 @@
+"""
+[description]
+Relative elevation calculator. Computes donut-based relative elevation ratios and
+reference elevation per feature using DuckDB Spatial.
+"""
 from typeguard import typechecked
 from typing import Self, Tuple
 from pathlib import Path
@@ -162,15 +167,15 @@ class RelativeElevationCalculator:
                                      ) -> Self:
         """
         [description]
-        Calculate relative elevation metrics for one or more `elevation_types` (e.g., "dem",
-        "dsm") and `buffer_sizes` using the standardized worker runner (`run_query_workers`).
+        Calculate relative elevation metrics for one or more elevation types and
+        buffer sizes using the standardized worker runner (`run_query_workers`).
 
         [input]
-        - elevation_types: str | list[str] — Elevation sources to compute. Must be in VALID_ELEVATION_TYPES.
+        - elev_types: str | list[str] — Elevation source(s) to compute (in `VALID_ELEVATION_TYPES`).
         - buffer_sizes: float | list[float] — Buffer distances for donut rings.
 
         [output]
-        - Self — Returns self for chaining. Appends rows with [`id`, `varname`, `year` (NULL), `value`].
+        - Self — Appends rows with [`id`, `varname`, `year` (NULL), `value`] and returns self.
         """
         elev_types, buffer_sizes = _normalize_params(elev_types, buffer_sizes)
         for elev_type in elev_types:

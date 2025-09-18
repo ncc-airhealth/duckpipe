@@ -63,26 +63,18 @@ class BusStopDistanceCalculator:
     def calculate_bus_stop_distance(self, years: int | list[int]) -> Self:
         """
         [description]
-        Calculate per-feature minimum distance to airports for one or more years. Uses the
-        standardized worker runner to execute DuckDB SQL per chunk and aggregates results
-        into `self.result_df`.
+        Calculate per-feature minimum distance to bus stops for one or more years.
 
         [input]
-        - years: int | list[int] — One or more years to compute. Valid: `VALID_YEARS`.
+        - years: int | list[int] — Year(s) to compute (in `VALID_YEARS`).
 
         [output]
-        - Self — Returns self for method chaining. Appends rows to `self.result_df` with columns
-          [`id`, `varname`, `year`, `value`].
+        - Self — Appends rows to `self.result_df` and returns self.
 
         [example usage]
         ```python
-        geovariable = (
-            calculator
-            .set_dataframe(gdf)
-            .chunk_by_centroid(max_cluster_size=MAX_CLUSTER_SIZE, distance_threshold=MAX_CLUSTER_WIDTH)
-            .calculate_bus_stop_distance(years=[2020, 2021, 2023])
-            .get_result(pivot=True)
-        )
+        calculator.calculate_bus_stop_distance(years=[2020, 2021, 2023])
+        ```
         """
         # normalize input
         years = _normalize_params(years)

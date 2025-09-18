@@ -1,3 +1,8 @@
+"""
+[description]
+Road LLW calculator. Computes length-based road metrics within buffers per
+feature and year: L (length), LL (lane length), LLW (lane length weighted by width).
+"""
 from typeguard import typechecked
 from typing import Self, Tuple
 from pathlib import Path
@@ -15,12 +20,15 @@ CREATE OR REPLACE MACRO varname(vartype, buffer_size) AS (
 @typechecked
 def _normalize_params(buffer_sizes: float | list[float], years: int | list[int], ) -> Tuple[list[int], list[float]]:
     """
-    Normalize and validate `mr_types` and `years` arguments.
+    [description]
+    Normalize and validate `buffer_sizes` and `years` arguments.
 
-    - var_types: str | list[str] — One or more variable types (e.g., "L", "LL", "W").
+    [input]
     - buffer_sizes: float | list[float] — One or more buffer sizes.
+    - years: int | list[int] — One or more target years (in `VALID_YEARS`).
 
-    - (list[str], list[float]) — Sorted, validated variable types and buffer sizes.
+    [output]
+    - tuple[list[float], list[int]] — Sorted buffer sizes and years.
     """
     # normalize input type
     if isinstance(years, int):
@@ -42,13 +50,15 @@ def _normalize_params(buffer_sizes: float | list[float], years: int | list[int],
 @typechecked
 def _generate_query(buffer_sizes: list[float], year: int, table_path: Path) -> Tuple[str, str, str]:
     """
-    Build DuckDB SQL segments to compute minimum distance from each feature to the
-    specified main road type for a given `year`.
+    [description]
+    Build DuckDB SQL to compute road metrics (L, LL, LLW) within given buffers for `year`.
 
-    - mr_type: str — Road type key (one of `VALID_MR_TYPES`).
-    - year: int — Target year (one of `VALID_YEARS`).
-    - table_path: pathlib.Path — Parquet table path for the given road type.
+    [input]
+    - buffer_sizes: list[float] — Buffer sizes to apply.
+    - year: int — Target year (in `VALID_YEARS`).
+    - table_path: Path — Parquet table path for roads.
 
+    [output]
     - tuple[str, str, str] — (pre_query, main_query, post_query).
     """
     values_clause = ", ".join(f"({bs})" for bs in buffer_sizes)
@@ -113,16 +123,19 @@ class RoadLLWCalculator:
 
     def calculate_road_llw(self, buffer_sizes: float | list[float], years: int | list[int]) -> Self:
         """
-        Calculate per-feature minimum distance to main roads for one or more `mr_types`
-        and `years` using the standardized worker runner (`run_query_workers`).
+        [description]
+        Calculate road metrics (L, LL, LLW) within buffer(s) for one or more years.
 
-        - mr_types: str | list[str] — Road type(s) to compute (must be in `VALID_MR_TYPES`).
-        - years: int | list[int] — Year(s) to compute (must be in `VALID_YEARS`).
+        [input]
+        - buffer_sizes: float | list[float] — Buffer sizes to apply.
+        - years: int | list[int] — Year(s) to compute (in `VALID_YEARS`).
 
-        - Self — Returns self for chaining. Appends rows with [`id`, `varname`, `year`, `value`].
+        [output]
+        - Self — Appends rows to `self.result_df` and returns self.
 
+        [example usage]
         ```python
-        calculator.calculate_road_llw(mr_types=["mr1", "mr2"], years=[2010, 2020])
+        calculator.calculate_road_llw(buffer_sizes=[100, 300], years=[2010, 2020])
         ```
         """
         # normalize input

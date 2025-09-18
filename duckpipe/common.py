@@ -1,8 +1,7 @@
 """
-Common constants and settings shared across the duckpipe package.
-
-This module defines reference CRS, database/schema names, standardized column names
-for outputs, multiprocessing sentinels, and tqdm display settings used by calculators.
+[description]
+Common constants and settings for duckpipe (CRS, schema/names, std columns,
+sentinels, tqdm formatting).
 """
 REF_EPSG = 5179
 DB_NAME = "main"

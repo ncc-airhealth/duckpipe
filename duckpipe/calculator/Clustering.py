@@ -1,3 +1,8 @@
+"""
+[description]
+Chunking utilities to split input geometries into spatially coherent chunks for
+efficient memory locality and parallel processing.
+"""
 import pandas as pd
 import numpy as np
 from scipy.cluster.hierarchy import linkage, fcluster

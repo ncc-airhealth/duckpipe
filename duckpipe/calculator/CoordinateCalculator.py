@@ -1,6 +1,7 @@
 """
-Coordinate calculator to derive representative coordinates (centroid or point-on-surface)
-for each input geometry and emit both projected (TM) and geographic (WGS84) coordinates.
+[description]
+Coordinate calculator. Derives representative coordinates (centroid or point-on-surface)
+per feature and emits projected (TM) and geographic (WGS84) values.
 """
 
 from typeguard import typechecked

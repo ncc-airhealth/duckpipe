@@ -42,26 +42,21 @@ class Calculator(Worker,
                  RiverDistanceCalculator):
     """
     [description]
-    High-level orchestrator that composes all calculator mixins to compute geospatial variables
-    using DuckDB + Spatial. It manages DB initialization, chunking of input geometries, and
-    aggregation of results into a final DataFrame.
+    High-level orchestrator that composes calculator mixins and runs geospatial
+    computations on DuckDB Spatial with chunked processing and result aggregation.
 
     [example usage]
     ```python
     import duckpipe as dp
 
-    calculator = dp.Calculator(db_path="path/to/parquet_dir", n_workers=2, memory_limit="6GB")
+    calculator = dp.Calculator(data_dir="path/to/parquet_dir", n_workers=2)
     result = (
         calculator
-        .set_dataframe(gdf)  # a GeoDataFrame with geometry in EPSG:4326
+        .add_point_with_table(df, x_col="lon", y_col="lat", epsg=4326)
         .chunk_by_centroid(max_cluster_size=100, distance_threshold=10000)
         .calculate_airport_distance(years=[2000, 2005])
-        .calculate_coastline_distance(years=[2000, 2005])
         .calculate_landuse_area_ratio(years=[2000, 2005], buffer_sizes=[100, 300, 500])
-        .calculate_relative_elevation(elevation_types=["dem", "dsm"], buffer_sizes=[1000, 5000])
-        .calculate_mdl_distance(years=[2005, 2010, 2015, 2020, 2023])
-        .calculate_port_distance(years=[2000, 2005])
-        .calculate_railstation_distance(years=[2005, 2010])
+        .calculate_relative_elevation(elev_types=["dem", "dsm"], buffer_sizes=[1000, 5000])
         .calculate_river_distance(years=[2023])
         .get_result(pivot=True)
     )
@@ -75,22 +70,20 @@ class Calculator(Worker,
                  verbose: bool=True):
         """
         [description]
-        Initialize the Calculator with an in-memory DuckDB connection and runtime configuration.
+        Configure runtime and open an in-memory DuckDB connection with Spatial.
 
         [input]
-        - db_path: str | Path — Directory path containing Parquet files used by calculators (e.g.,
-          "airport.parquet", "coastline.parquet", "landuse_YYYY.parquet", "dem.parquet", "dsm.parquet").
-        - n_workers: int — Number of worker processes used by calculator methods.
-        - memory_limit: str — Memory limit passed to DuckDB (e.g., "6GB").
-        - verbose: bool — If True, prints progress bars and elapsed time.
+        - data_dir: str | Path — Directory containing Parquet sources used by calculators
+        - mode: WorkerMode | str — Execution mode (chunked multi/single or total single).
+        - n_workers: int — Degree of parallelism or DuckDB threads depending on mode.
+        - verbose: bool — Enable progress bars and timing logs.
 
         [output]
-        - None — Side effects: installs extensions, opens a connection, and stores configuration.
+        - None — Side effects: installs extensions, creates connection, stores config.
 
         [example usage]
         ```python
-        import duckpipe as dp
-        calculator = dp.Calculator(db_path="path/to/parquet_dir", n_workers=2, memory_limit="6GB")
+        calculator = Calculator(data_dir="/data/geo", n_workers=4, verbose=True)
         ```
         """
         self.worker_mode = mode
@@ -107,6 +100,20 @@ class Calculator(Worker,
                             x_col: str = 'longitude', 
                             y_col: str = 'latitude', 
                             epsg: int = 4326) -> Self:
+        """
+        [description]
+        Register a plain DataFrame with x/y columns, transform to reference CRS,
+        and prepare geometry/attribute tables and initial chunks.
+
+        [input]
+        - df: pandas.DataFrame — Source table with coordinate columns.
+        - x_col: str — X/longitude column name in `df`.
+        - y_col: str — Y/latitude column name in `df`.
+        - epsg: int — EPSG code of input coordinates (default: 4326).
+
+        [output]
+        - Self — Populates `self.wkt_df`, `self.attr_df`, initializes `self.chunks` and `self.result_df`.
+        """
         # register input df
         self.conn.register('input_df', df)
         # geometry df
@@ -142,14 +149,14 @@ class Calculator(Worker,
     def get_result(self, pivot: bool=True) -> pd.DataFrame:
         """
         [description]
-        Merge and shape the accumulated results into the final DataFrame. Optionally pivot the
-        long-form results into a wide format with one row per (id, year).
+        Assemble final output by merging computed variables back to attributes.
+        Optionally pivot long-form rows to a wide table per (id, year).
 
         [input]
-        - pivot: bool — If True, pivot to wide format; otherwise, return long-form results.
+        - pivot: bool — Pivot to wide format if True; otherwise return long-form.
 
         [output]
-        - pandas.DataFrame — Final result joined back to the original (non-geometry) columns.
+        - pandas.DataFrame — Result with original columns plus computed variables.
 
         [example usage]
         ```python

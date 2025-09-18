@@ -1,3 +1,8 @@
+"""
+[description]
+Utilities for DuckDB: install/load required extensions and create connections
+configured for geospatial workloads.
+"""
 import duckdb
 import os
 from duckdb import DuckDBPyConnection
