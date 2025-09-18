@@ -7,7 +7,7 @@ import pandas as pd
 import multiprocessing as mp
 import queue
 from typeguard import typechecked
-from typing import Self, Callable
+from typing import Self
 from tqdm import tqdm
 from duckpipe.common import SENTINEL, TQDM_BAR_FORMAT
 from duckpipe.duckdb_utils import generate_duckdb_memory_connection
@@ -38,6 +38,7 @@ def _run_query(conn: DuckDBPyConnection,
     """)
     conn.execute(pre_query)
     result = conn.execute(main_query).df()
+    # raise Exception(conn.execute("SELECT * FROM aoi_landuse").df()) # line for query debugging
     conn.execute(post_query)
     conn.unregister('input')
     conn.execute("DROP TABLE IF EXISTS chunk")

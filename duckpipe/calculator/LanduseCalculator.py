@@ -51,8 +51,8 @@ def _generate_query(year: int, table_path: Path, buffer_sizes: list[float]) -> T
         f"""
         CREATE OR REPLACE TEMP TABLE result_skeleton AS (
             WITH codes AS (
-                SELECT DISTINCT code FROM '{table_path}'
-                WHERE year = {year}
+                SELECT DISTINCT code 
+                FROM '{table_path}'
             )
             SELECT DISTINCT c.id, t.code, bs.buffer_size
             FROM codes AS t, chunk AS c, buffer_size AS bs
@@ -67,25 +67,29 @@ def _generate_query(year: int, table_path: Path, buffer_sizes: list[float]) -> T
                     MIN(ST_XMin(geometry)) - {max_buffer_size} AS xmin,
                     MIN(ST_YMin(geometry)) - {max_buffer_size} AS ymin,
                     MAX(ST_XMax(geometry)) + {max_buffer_size} AS xmax,
-                    MAX(ST_YMax(geometry)) + {max_buffer_size} AS ymax
+                    MAX(ST_YMax(geometry)) + {max_buffer_size} AS ymax, 
+                    ST_MakeEnvelope(
+                        MIN(ST_XMin(geometry)) - {max_buffer_size}, 
+                        MIN(ST_YMin(geometry)) - {max_buffer_size}, 
+                        MAX(ST_XMax(geometry)) + {max_buffer_size}, 
+                        MAX(ST_YMax(geometry)) + {max_buffer_size}
+                    ) AS aoi
                 FROM chunk
             ),
             filtered AS (
                 SELECT 
                     code, 
-                    ST_Intersection(
-                        t.geometry, 
-                        ST_MakeEnvelope(a.xmin, a.ymin, a.xmax, a.ymax)
-                    ) AS geometry
-                FROM aoi AS a
-                INNER JOIN '{table_path}' AS t ON
+                    ST_Intersection(t.geometry, a.aoi) AS geometry
+                FROM '{table_path}' AS t
+                INNER JOIN aoi AS a ON
                     t.xmin < a.xmax AND 
                     t.xmax > a.xmin AND 
                     t.ymin < a.ymax AND 
                     t.ymax > a.ymin
-                WHERE t.year = {year}
             )
-            SELECT * FROM filtered WHERE NOT ST_IsEmpty(geometry)
+            SELECT * 
+            FROM filtered 
+            WHERE NOT ST_IsEmpty(geometry)
         );
         CREATE INDEX rtree_aoi_landuse
         ON aoi_landuse 
@@ -112,9 +116,9 @@ def _generate_query(year: int, table_path: Path, buffer_sizes: list[float]) -> T
                 SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) ) AS a, 
                 SUM( ST_Area(ST_Intersection(l.geometry, a.geometry)) / a.area ) AS p
             FROM 
-                aoi_landuse AS l
-            INNER JOIN 
-                aoi AS a ON ST_Intersects(l.geometry, a.geometry)
+                aoi AS a
+            LEFT JOIN 
+                aoi_landuse AS l ON ST_Intersects(l.geometry, a.geometry)
             GROUP BY 
                 a.id, 
                 l.code, 
@@ -157,6 +161,7 @@ def _generate_query(year: int, table_path: Path, buffer_sizes: list[float]) -> T
         DROP TABLE IF EXISTS result_skeleton;
         DROP TABLE IF EXISTS buffer_size;
     """
+    # main_query = "SELECT * FROM VALUES (1, 9999, 'test', 99.99) AS t(id, year, varname, value);" # line for debugging
     return pre_query, main_query, post_query
 
 
