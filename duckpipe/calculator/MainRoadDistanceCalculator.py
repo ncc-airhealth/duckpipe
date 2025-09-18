@@ -1,6 +1,7 @@
 """
-Main road distance calculator that computes per-feature minimum distances to main roads
-for requested types and years using DuckDB Spatial over geometry chunks.
+[description]
+Main road distance calculator. Computes per-feature minimum distances to main
+roads for requested types and years using DuckDB Spatial over geometry chunks.
 """
 from typeguard import typechecked
 from typing import Self, Tuple
@@ -67,7 +68,7 @@ def _generate_query(mr_type: str, year: int, table_path: Path) -> Tuple[str, str
         mr_sel_year AS (
             SELECT geometry
             FROM '{table_path}'
-            WHERE year = {year}
+            WHERE year = {year} AND NOT ST_IsEmpty(geometry)
         ), 
         result AS (
             SELECT 
@@ -88,14 +89,17 @@ class MainRoadDistanceCalculator:
 
     def calculate_main_road_distance(self, mr_types: str | list[str], years: int | list[int]) -> Self:
         """
-        Calculate per-feature minimum distance to main roads for one or more `mr_types`
-        and `years` using the standardized worker runner (`run_query_workers`).
+        [description]
+        Calculate per-feature minimum distance to main roads for given types and years.
 
-        - mr_types: str | list[str] — Road type(s) to compute (must be in `VALID_MR_TYPES`).
-        - years: int | list[int] — Year(s) to compute (must be in `VALID_YEARS`).
+        [input]
+        - mr_types: str | list[str] — Road type(s) (in `VALID_MR_TYPES`).
+        - years: int | list[int] — Year(s) to compute (in `VALID_YEARS`).
 
-        - Self — Returns self for chaining. Appends rows with [`id`, `varname`, `year`, `value`].
+        [output]
+        - Self — Appends rows to `self.result_df` and returns self.
 
+        [example usage]
         ```python
         calculator.calculate_main_road_distance(mr_types=["mr1", "mr2"], years=[2010, 2020])
         ```

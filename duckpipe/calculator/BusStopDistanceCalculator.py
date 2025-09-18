@@ -1,27 +1,27 @@
 """
 [description]
-Road distance calculator that computes per-feature minimum distances to roads
+Bus stop distance calculator that computes per-feature minimum distances to bus stops
 for requested years using DuckDB Spatial over geometry chunks.
 """
+
 from typeguard import typechecked
 from typing import Self, Tuple
 from pathlib import Path
 
-VALID_YEARS = [2005, 2010, 2015, 2020]
-TABLE_NAME = "roads"
+VALID_YEARS = [2020, 2021, 2023]
+TABLE_NAME = "bus_stop"
 VAR_NAME_MACRO = """
     CREATE OR REPLACE MACRO varname() AS (
-        'D_Road'
+        'D_Bus'
     );
 """
 
 
 @typechecked
 def _normalize_params(years: int | list[int]) -> list[int]:
-    """Normalize and validate years."""
     # normalize input type
     if isinstance(years, int):
-        years =[years]
+        years = [years]
     # sort
     years = sorted(years)
     # check
@@ -34,30 +34,21 @@ def _normalize_params(years: int | list[int]) -> list[int]:
 
 @typechecked
 def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
-    """
-    Build DuckDB SQL segments to compute minimum distance from each feature to the
-    specified main road type for a given `year`.
-
-    - year: int — Target year (one of `VALID_YEARS`).
-    - table_path: pathlib.Path — Parquet table path for the given road type.
-
-    - tuple[str, str, str] — (pre_query, main_query, post_query).
-    """
     pre_query = VAR_NAME_MACRO
     main_query = f"""
         WITH 
-        road_sel_year AS (
+        busstop_sel_year AS (
             SELECT geometry
             FROM '{table_path}'
             WHERE year = {year} AND NOT ST_IsEmpty(geometry)
-        ), 
+        ),
         result AS (
             SELECT 
-                id, 
-                varname() AS varname, 
-                {year} AS year, 
-                MIN(ST_Distance(r.geometry, c.geometry)) AS value
-            FROM chunk AS c, road_sel_year AS r
+                id,
+                varname() AS varname,
+                {year} AS year,
+                MIN(ST_Distance(a.geometry, c.geometry)) AS value
+            FROM chunk AS c, busstop_sel_year AS a
             GROUP BY c.id
         )
         SELECT * FROM result;
@@ -66,12 +57,13 @@ def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
     return pre_query, main_query, post_query
 
 
-class RoadDistanceCalculator:
+class BusStopDistanceCalculator:
 
-    def calculate_road_distance(self, years: int | list[int]) -> Self:
+    @typechecked
+    def calculate_bus_stop_distance(self, years: int | list[int]) -> Self:
         """
         [description]
-        Calculate per-feature minimum distance to roads for one or more years.
+        Calculate per-feature minimum distance to bus stops for one or more years.
 
         [input]
         - years: int | list[int] — Year(s) to compute (in `VALID_YEARS`).
@@ -81,16 +73,16 @@ class RoadDistanceCalculator:
 
         [example usage]
         ```python
-        calculator.calculate_road_distance(years=[2010, 2020])
+        calculator.calculate_bus_stop_distance(years=[2020, 2021, 2023])
         ```
         """
         # normalize input
         years = _normalize_params(years)
-        # generate request
+        # generate requests per year
+        table_path = (self.data_dir / f"{TABLE_NAME}.parquet")
         for year in years:
-            table_path = self.data_dir / f"{TABLE_NAME}.parquet"
             pre_query, main_query, post_query = _generate_query(year, table_path)
-            desc = f"Road distance ({year})"
+            desc = f"Bus stop distance ({year})"
             self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)
         # done
         return self

@@ -1,7 +1,8 @@
 """
-Parallel worker utilities to execute DuckDB Spatial SQL per geometry chunk using
-multiprocessing. Each worker registers the input as a temp `chunk` table and returns
-partial results to be aggregated into `self.result_df`.
+[description]
+Parallel worker utilities for executing DuckDB Spatial SQL per geometry chunk.
+Registers each chunk as a temp `chunk(id, geometry)` table and aggregates partial
+results into `self.result_df`.
 """
 import pandas as pd
 import multiprocessing as mp
@@ -38,7 +39,7 @@ def _run_query(conn: DuckDBPyConnection,
     """)
     conn.execute(pre_query)
     result = conn.execute(main_query).df()
-    # raise Exception(conn.execute("SELECT * FROM aoi_landuse").df()) # line for query debugging
+    # raise Exception(conn.execute("SELECT * FROM chunk").df()) # line for query debugging
     conn.execute(post_query)
     conn.unregister('input')
     conn.execute("DROP TABLE IF EXISTS chunk")
