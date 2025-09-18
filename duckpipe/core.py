@@ -5,28 +5,14 @@ from datetime import datetime
 from pathlib import Path
 
 import duckpipe.common as C
-from duckpipe.calculator import discover_calculator_classes
 from duckpipe.duckdb_utils import install_duckdb_extensions, generate_duckdb_memory_connection
 from duckpipe.calculator.Worker import WorkerMode
+from duckpipe.mixin import CalculatorMixin
 
 UUID = "_35ab93c72f484478a4cab4233aa3d434"
 
-class _AutoMixinMeta(type):
-    """Metaclass that appends discovered calculator classes (Worker, Clustering,
-    and all *Calculator mixins) to class bases, keeping their intended order.
-    """
-    def __new__(mcls, name, bases, namespace):
-        # calculator classes
-        discovered = discover_calculator_classes()
-        # merge with existing bases
-        ordered: list[type] = []
-        for cls in (*discovered, *bases):
-            if cls not in ordered:
-                ordered.append(cls)
-        new_bases = tuple(ordered)
-        return super().__new__(mcls, name, new_bases, namespace)
 
-class Calculator(metaclass=_AutoMixinMeta):
+class Calculator(CalculatorMixin):
     """
     [description]
     High-level orchestrator that composes calculator mixins and runs geospatial
