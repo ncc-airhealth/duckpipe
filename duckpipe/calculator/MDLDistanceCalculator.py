@@ -1,6 +1,6 @@
 """
 [description]
-Airport distance calculator that computes per-feature minimum distances to airports
+Military Demarcation Line (MDL) calculator that computes per-feature minimum distances to MDL
 for requested years using DuckDB Spatial over geometry chunks.
 """
 
@@ -8,11 +8,11 @@ from typeguard import typechecked
 from typing import Self, Tuple
 from pathlib import Path
 
-VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
-TABLE_NAME = "airport"
+VALID_YEARS = [2000, 2005, 2010, 2015, 2020, 2023]
+TABLE_NAME = "mdl"
 VAR_NAME_MACRO = """
     CREATE OR REPLACE MACRO varname() AS (
-        'D_Airport'
+        'D_North'
     );
 """
 
@@ -37,7 +37,7 @@ def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
     pre_query = VAR_NAME_MACRO
     main_query = f"""
         WITH 
-        airport_sel_year AS (
+        mdl_sel_year AS (
             SELECT geometry
             FROM '{table_path}'
             WHERE year = {year} AND NOT ST_IsEmpty(geometry)
@@ -48,7 +48,7 @@ def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
                 varname() AS varname,
                 {year} AS year,
                 MIN(ST_Distance(a.geometry, c.geometry)) AS value
-            FROM chunk AS c, airport_sel_year AS a
+            FROM chunk AS c, mdl_sel_year AS a
             GROUP BY c.id
         )
         SELECT * FROM result;
@@ -57,13 +57,13 @@ def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
     return pre_query, main_query, post_query
 
 
-class AirportDistanceCalculator:
+class MDLDistanceCalculator:
 
     @typechecked
-    def calculate_airport_distance(self, years: int | list[int]) -> Self:
+    def calculate_mdl_distance(self, years: int | list[int]) -> Self:
         """
         [description]
-        Calculate per-feature minimum distance to airports for one or more years. Uses the
+        Calculate per-feature minimum distance to mdl for one or more years. Uses the
         standardized worker runner to execute DuckDB SQL per chunk and aggregates results
         into `self.result_df`.
 
@@ -80,7 +80,7 @@ class AirportDistanceCalculator:
             calculator
             .set_dataframe(gdf)
             .chunk_by_centroid(max_cluster_size=MAX_CLUSTER_SIZE, distance_threshold=MAX_CLUSTER_WIDTH)
-            .calculate_airport_distance(years=[2000, 2005])
+            .calculate_mdl_distance(years=[2020, 2021, 2023])
             .get_result(pivot=True)
         )
         """
@@ -90,7 +90,7 @@ class AirportDistanceCalculator:
         table_path = (self.data_dir / f"{TABLE_NAME}.parquet")
         for year in years:
             pre_query, main_query, post_query = _generate_query(year, table_path)
-            desc = f"Airport distance ({year})"
+            desc = f"MDL distance ({year})"
             self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)
         # done
         return self

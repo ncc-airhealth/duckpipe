@@ -7,14 +7,19 @@ from pathlib import Path
 import duckpipe.common as C
 from duckpipe.calculator.Worker import Worker
 from duckpipe.calculator.Clustering import Clustering
+from duckpipe.calculator.BusStopDistanceCalculator import BusStopDistanceCalculator
 from duckpipe.calculator.CoordinateCalculator import CoordinateCalculator
 from duckpipe.calculator.LanduseCalculator import LanduseCalculator
 from duckpipe.calculator.AirportDistanceCalculator import AirportDistanceCalculator
 from duckpipe.calculator.CoastlineDistanceCalculator import CoastlineDistanceCalculator
+from duckpipe.calculator.MDLDistanceCalculator import MDLDistanceCalculator
 from duckpipe.calculator.RelativeElevationCalculator import RelativeElevationCalculator
 from duckpipe.calculator.MainRoadDistanceCalculator import MainRoadDistanceCalculator
 from duckpipe.calculator.RoadDistanceCalculator import RoadDistanceCalculator
 from duckpipe.calculator.RoadLLWCalculator import RoadLLWCalculator
+from duckpipe.calculator.PortDistanceCalculator import PortDistanceCalculator
+from duckpipe.calculator.RailstationDistanceCalculator import RailstationDistanceCalculator
+from duckpipe.calculator.RiverDistanceCalculator import RiverDistanceCalculator
 from duckpipe.duckdb_utils import install_duckdb_extensions, generate_duckdb_memory_connection
 from duckpipe.calculator.Worker import WorkerMode
 
@@ -30,7 +35,11 @@ class Calculator(Worker,
                  RoadDistanceCalculator,
                  RoadLLWCalculator,
                  RelativeElevationCalculator, 
-                 ):
+                 BusStopDistanceCalculator,
+                 MDLDistanceCalculator,
+                 PortDistanceCalculator,
+                 RailstationDistanceCalculator,
+                 RiverDistanceCalculator):
     """
     [description]
     High-level orchestrator that composes all calculator mixins to compute geospatial variables
@@ -50,6 +59,10 @@ class Calculator(Worker,
         .calculate_coastline_distance(years=[2000, 2005])
         .calculate_landuse_area_ratio(years=[2000, 2005], buffer_sizes=[100, 300, 500])
         .calculate_relative_elevation(elevation_types=["dem", "dsm"], buffer_sizes=[1000, 5000])
+        .calculate_mdl_distance(years=[2005, 2010, 2015, 2020, 2023])
+        .calculate_port_distance(years=[2000, 2005])
+        .calculate_railstation_distance(years=[2005, 2010])
+        .calculate_river_distance(years=[2023])
         .get_result(pivot=True)
     )
     ```

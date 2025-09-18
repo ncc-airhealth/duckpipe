@@ -38,7 +38,7 @@ def _run_query(conn: DuckDBPyConnection,
     """)
     conn.execute(pre_query)
     result = conn.execute(main_query).df()
-    # raise Exception(conn.execute("SELECT * FROM aoi_landuse").df()) # line for query debugging
+    # raise Exception(conn.execute("SELECT * FROM chunk").df()) # line for query debugging
     conn.execute(post_query)
     conn.unregister('input')
     conn.execute("DROP TABLE IF EXISTS chunk")

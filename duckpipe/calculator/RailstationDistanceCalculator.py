@@ -1,6 +1,6 @@
 """
 [description]
-Airport distance calculator that computes per-feature minimum distances to airports
+Railstation distance calculator that computes per-feature minimum distances to railstations
 for requested years using DuckDB Spatial over geometry chunks.
 """
 
@@ -8,11 +8,11 @@ from typeguard import typechecked
 from typing import Self, Tuple
 from pathlib import Path
 
-VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
-TABLE_NAME = "airport"
+VALID_YEARS = [2005, 2010, 2015, 2020]
+TABLE_NAME = "railstation"
 VAR_NAME_MACRO = """
     CREATE OR REPLACE MACRO varname() AS (
-        'D_Airport'
+        'D_Rail'
     );
 """
 
@@ -37,7 +37,7 @@ def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
     pre_query = VAR_NAME_MACRO
     main_query = f"""
         WITH 
-        airport_sel_year AS (
+        railstation_sel_year AS (
             SELECT geometry
             FROM '{table_path}'
             WHERE year = {year} AND NOT ST_IsEmpty(geometry)
@@ -48,7 +48,7 @@ def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
                 varname() AS varname,
                 {year} AS year,
                 MIN(ST_Distance(a.geometry, c.geometry)) AS value
-            FROM chunk AS c, airport_sel_year AS a
+            FROM chunk AS c, railstation_sel_year AS a
             GROUP BY c.id
         )
         SELECT * FROM result;
@@ -57,13 +57,13 @@ def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
     return pre_query, main_query, post_query
 
 
-class AirportDistanceCalculator:
+class RailstationDistanceCalculator:
 
     @typechecked
-    def calculate_airport_distance(self, years: int | list[int]) -> Self:
+    def calculate_railstation_distance(self, years: int | list[int]) -> Self:
         """
         [description]
-        Calculate per-feature minimum distance to airports for one or more years. Uses the
+        Calculate per-feature minimum distance to railstations for one or more years. Uses the
         standardized worker runner to execute DuckDB SQL per chunk and aggregates results
         into `self.result_df`.
 
@@ -80,7 +80,7 @@ class AirportDistanceCalculator:
             calculator
             .set_dataframe(gdf)
             .chunk_by_centroid(max_cluster_size=MAX_CLUSTER_SIZE, distance_threshold=MAX_CLUSTER_WIDTH)
-            .calculate_airport_distance(years=[2000, 2005])
+            .calculate_railstation_distance(years=[2005, 2010])
             .get_result(pivot=True)
         )
         """
@@ -90,7 +90,7 @@ class AirportDistanceCalculator:
         table_path = (self.data_dir / f"{TABLE_NAME}.parquet")
         for year in years:
             pre_query, main_query, post_query = _generate_query(year, table_path)
-            desc = f"Airport distance ({year})"
+            desc = f"Railstation distance ({year})"
             self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)
         # done
         return self

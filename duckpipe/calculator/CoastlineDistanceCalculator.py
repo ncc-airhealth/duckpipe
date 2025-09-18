@@ -39,7 +39,7 @@ def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
         coastline_sel_year AS (
             SELECT ST_Simplify(geometry, {SIMPLIFY_THRESHOLD}) AS geometry
             FROM '{table_path}'
-            WHERE year = {year}
+            WHERE year = {year} AND NOT ST_IsEmpty(geometry)
         )
         , result AS (
             SELECT 

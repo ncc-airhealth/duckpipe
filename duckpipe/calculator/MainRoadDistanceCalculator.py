@@ -67,7 +67,7 @@ def _generate_query(mr_type: str, year: int, table_path: Path) -> Tuple[str, str
         mr_sel_year AS (
             SELECT geometry
             FROM '{table_path}'
-            WHERE year = {year}
+            WHERE year = {year} AND NOT ST_IsEmpty(geometry)
         ), 
         result AS (
             SELECT 
