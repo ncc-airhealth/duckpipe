@@ -78,6 +78,6 @@ class CoastlineDistanceCalculator:
         for year in years:
             pre_query, main_query, post_query = _generate_query(year, table_path)
             desc = f"Coastline distance ({year})"
-            self.run_query_workers(pre_query, main_query, post_query, desc=desc)
+            self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)
         # done
         return self

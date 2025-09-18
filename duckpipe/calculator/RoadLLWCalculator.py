@@ -132,6 +132,6 @@ class RoadLLWCalculator:
             table_path = self.data_dir / f"{TABLE_NAME}.parquet"
             pre_query, main_query, post_query = _generate_query(buffer_sizes, year, table_path)
             desc = f"Road LLW ({year}, {buffer_sizes})"
-            self.run_query_workers(pre_query, main_query, post_query, desc=desc)
+            self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)
         # done
         return self
