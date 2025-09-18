@@ -5,22 +5,30 @@ from datetime import datetime
 from pathlib import Path
 
 import duckpipe.common as C
+from duckpipe.calculator.Worker import Worker
 from duckpipe.calculator.Clustering import Clustering
 from duckpipe.calculator.CoordinateCalculator import CoordinateCalculator
 from duckpipe.calculator.LanduseCalculator import LanduseCalculator
 from duckpipe.calculator.AirportDistanceCalculator import AirportDistanceCalculator
 from duckpipe.calculator.CoastlineDistanceCalculator import CoastlineDistanceCalculator
 from duckpipe.calculator.RelativeElevationCalculator import RelativeElevationCalculator
+from duckpipe.calculator.MainRoadDistanceCalculator import MainRoadDistanceCalculator
+from duckpipe.calculator.RoadDistanceCalculator import RoadDistanceCalculator
+from duckpipe.calculator.RoadLLWCalculator import RoadLLWCalculator
 from duckpipe.duckdb_utils import install_duckdb_extensions, generate_duckdb_memory_connection
+from duckpipe.calculator.Worker import WorkerMode
 
+UUID = "_35ab93c72f484478a4cab4233aa3d434"
 
-
-
-class Calculator(Clustering,
+class Calculator(Worker, 
+                 Clustering,
                  CoordinateCalculator, 
                  LanduseCalculator, 
                  AirportDistanceCalculator, 
                  CoastlineDistanceCalculator, 
+                 MainRoadDistanceCalculator,
+                 RoadDistanceCalculator,
+                 RoadLLWCalculator,
                  RelativeElevationCalculator, 
                  ):
     """
@@ -47,7 +55,11 @@ class Calculator(Clustering,
     ```
     """
     @typechecked
-    def __init__(self, db_path: str | Path, n_workers: int=8, memory_limit: str="5GB", verbose=True):
+    def __init__(self, 
+                 data_dir: str | Path, 
+                 mode: WorkerMode | str=WorkerMode.CHUNKED_MULTI, 
+                 n_workers: int=8, 
+                 verbose: bool=True):
         """
         [description]
         Initialize the Calculator with an in-memory DuckDB connection and runtime configuration.
@@ -68,15 +80,13 @@ class Calculator(Clustering,
         calculator = dp.Calculator(db_path="path/to/parquet_dir", n_workers=2, memory_limit="6GB")
         ```
         """
+        self.worker_mode = mode
         self.n_workers = n_workers
-        self.memory_limit = memory_limit
         self.verbose = verbose
-        self.db_path = Path(db_path)
+        self.data_dir = Path(data_dir)
         install_duckdb_extensions()
-        self.conn = generate_duckdb_memory_connection(memory_limit=memory_limit)
+        self.conn = generate_duckdb_memory_connection()
         self.start_time = datetime.now()
-        self.wkt_df = pd.DataFrame()
-        self.attr_df = pd.DataFrame()
 
     @typechecked
     def add_point_with_table(self, 
@@ -89,7 +99,7 @@ class Calculator(Clustering,
         # geometry df
         query = f"""
         SELECT
-            ROW_NUMBER() OVER () AS {C.ID_COL}, 
+            ROW_NUMBER() OVER () AS id, 
             ST_AsText(
                 ST_Transform(
                     ST_Point({x_col}, {y_col}), 
@@ -103,9 +113,7 @@ class Calculator(Clustering,
         self.wkt_df = self.conn.execute(query).df()
         # attribute df
         query = f"""
-        SELECT 
-            ROW_NUMBER() OVER () AS {C.ID_COL}, 
-            *
+        SELECT *, ROW_NUMBER() OVER () AS {UUID}
         FROM input_df
         """
         self.attr_df = self.conn.execute(query).df()
@@ -139,9 +147,9 @@ class Calculator(Clustering,
         result_df = self.result_df
         if pivot:
             result_df = result_df.pivot_table(
-                index=[C.ID_COL, C.YEAR_COL], 
-                columns=[C.VAR_COL], 
-                values=C.VAL_COL,
+                index=["id", "year"], 
+                columns=["varname"], 
+                values="value",
                 fill_value=None, 
                 aggfunc="first", 
                 dropna=False
@@ -149,14 +157,18 @@ class Calculator(Clustering,
             result_df = result_df[sorted(result_df.columns)]
             result_df.reset_index(inplace=True)
         else:
-            result_df.sort_values(by=[C.ID_COL, C.YEAR_COL, C.VAR_COL], inplace=True)
+            result_df.sort_values(by=["id", "year", "varname"], inplace=True)
+        
+        # merge
         result = (
             self.attr_df
-            .merge(result_df, on=C.ID_COL, how="left")
-            .sort_values(by=[C.ID_COL, C.YEAR_COL])
-            .drop(columns=[C.ID_COL])
+            .merge(result_df, left_on=UUID, right_on="id", how="left", suffixes=("", "_"))
+            .sort_values(by=[UUID, "year"])
+            .drop(columns=[UUID])
             .reset_index(drop=True)
         )
+        if "id_" in result.columns:
+            result.drop(columns=["id_"], inplace=True)
         if self.verbose:
             print(f"Elapsed time: {self.end_time - self.start_time}")
         return result
