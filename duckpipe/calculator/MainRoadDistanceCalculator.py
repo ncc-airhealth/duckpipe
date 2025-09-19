@@ -68,7 +68,7 @@ def _generate_query(mr_type: str, year: int, table_path: str) -> Tuple[str, str,
         mr_sel_year AS (
             SELECT geometry
             FROM '{table_path}'
-            WHERE year = {year} AND NOT ST_IsEmpty(geometry)
+            WHERE year = {year}
         ), 
         result AS (
             SELECT 
@@ -77,6 +77,7 @@ def _generate_query(mr_type: str, year: int, table_path: str) -> Tuple[str, str,
                 {year} AS year, 
                 MIN(ST_Distance(m.geometry, c.geometry)) AS value
             FROM chunk AS c, mr_sel_year AS m
+            WHERE NOT ST_IsEmpty(m.geometry)
             GROUP BY c.id
         )
         SELECT * FROM result;

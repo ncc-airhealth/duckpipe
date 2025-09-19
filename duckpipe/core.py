@@ -68,12 +68,35 @@ class Calculator(CalculatorMixin):
     
     @typechecked
     def connect_local_database(self, data_dir: str | Path) -> Self:
+        """
+        [description]
+        Connect to a local DuckDB database.
+
+        [input]
+        - data_dir: str | Path — Path to the local database file.
+
+        [output]
+        - Self — Side effects: stores data_dir and creates connection.
+        """
         self.data_dir = Path(data_dir).__str__()
         self.conn = generate_duckdb_memory_connection()
         return self
 
     @typechecked
     def connect_cloud_storage(self, s3_key_id: str, s3_secret: str, s3_account_id: str, s3_bucket_name: str) -> Self:
+        """
+        [description]
+        Connect to a cloud storage bucket using R2.
+
+        [input]
+        - s3_key_id: str — R2 access key ID.
+        - s3_secret: str — R2 secret access key.
+        - s3_account_id: str — R2 account ID.
+        - s3_bucket_name: str — R2 bucket name.
+
+        [output]
+        - Self — Side effects: stores data_dir and creates connection.
+        """
         self.data_dir = f'r2://{s3_bucket_name}/airhealth'
         self.conn = generate_duckdb_memory_connection()
         self.connection_query = "\n".join([
