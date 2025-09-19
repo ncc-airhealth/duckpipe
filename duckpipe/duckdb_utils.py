@@ -49,7 +49,7 @@ def install_duckdb_extensions():
     return
 
 @typechecked
-def generate_duckdb_memory_connection(memory_limit: str="6GB") -> DuckDBPyConnection:
+def generate_duckdb_memory_connection(memory_limit: str="8GB") -> DuckDBPyConnection:
     """
     [description]
     Create an in-memory DuckDB connection configured for geospatial workloads

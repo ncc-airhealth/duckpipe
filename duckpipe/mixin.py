@@ -13,6 +13,7 @@ from duckpipe.calculator.RiverDistanceCalculator import RiverDistanceCalculator
 from duckpipe.calculator.RoadDistanceCalculator import RoadDistanceCalculator
 from duckpipe.calculator.RoadLLWCalculator import RoadLLWCalculator
 from duckpipe.calculator.Worker import Worker
+from duckpipe.calculator._IntersectingOACalculator import IntersectingOACalculator
 
 
 class CalculatorMixin(
@@ -30,7 +31,8 @@ class CalculatorMixin(
     RiverDistanceCalculator,
     RoadDistanceCalculator,
     RoadLLWCalculator,
-    Worker
+    Worker,
+    IntersectingOACalculator
 ):
     pass
 

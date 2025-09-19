@@ -1,6 +1,7 @@
 # features
 
-- [ ] Cloud Data Support
+- [x] Cloud Data Support
+- [x] Output Area Intersection Ratio Caching
 - [ ] remove pandas dependency
 - [ ] build test data & pytest-based pipeline 
 - [ ] improved clustering algorithm
