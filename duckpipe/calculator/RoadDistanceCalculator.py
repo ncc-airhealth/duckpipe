@@ -33,7 +33,7 @@ def _normalize_params(years: int | list[int]) -> list[int]:
     return years
 
 @typechecked
-def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
+def _generate_query(year: int, table_path: str) -> Tuple[str, str, str]:
     """
     Build DuckDB SQL segments to compute minimum distance from each feature to the
     specified main road type for a given `year`.
@@ -88,7 +88,7 @@ class RoadDistanceCalculator:
         years = _normalize_params(years)
         # generate request
         for year in years:
-            table_path = self.data_dir / f"{TABLE_NAME}.parquet"
+            table_path = f"{self.data_dir}/{TABLE_NAME}.parquet"
             pre_query, main_query, post_query = _generate_query(year, table_path)
             desc = f"Road distance ({year})"
             self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)

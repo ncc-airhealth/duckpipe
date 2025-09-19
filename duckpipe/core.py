@@ -37,7 +37,6 @@ class Calculator(CalculatorMixin):
     """
     @typechecked
     def __init__(self, 
-                 data_dir: str | Path, 
                  mode: WorkerMode | str=WorkerMode.CHUNKED_MULTI, 
                  n_workers: int=8, 
                  verbose: bool=True):
@@ -62,10 +61,34 @@ class Calculator(CalculatorMixin):
         self.worker_mode = mode
         self.n_workers = n_workers
         self.verbose = verbose
-        self.data_dir = Path(data_dir)
         install_duckdb_extensions()
         self.conn = generate_duckdb_memory_connection()
         self.start_time = datetime.now()
+        self.connection_query = ""
+    
+    @typechecked
+    def connect_local_database(self, data_dir: str | Path) -> Self:
+        self.data_dir = Path(data_dir).__str__()
+        self.conn = generate_duckdb_memory_connection()
+        return self
+
+    @typechecked
+    def connect_cloud_storage(self, s3_key_id: str, s3_secret: str, s3_account_id: str, s3_bucket_name: str) -> Self:
+        self.data_dir = f'r2://{s3_bucket_name}/airhealth'
+        self.conn = generate_duckdb_memory_connection()
+        self.connection_query = "\n".join([
+            self.connection_query,
+            f"""
+            CREATE SECRET (
+                TYPE r2,
+                KEY_ID '{s3_key_id}',
+                SECRET '{s3_secret}',
+                ACCOUNT_ID '{s3_account_id}'
+            );
+            """
+        ])
+        self.conn.execute(self.connection_query)
+        return self
 
     @typechecked
     def add_point_with_table(self, 

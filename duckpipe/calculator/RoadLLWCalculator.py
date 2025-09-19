@@ -48,7 +48,7 @@ def _normalize_params(buffer_sizes: float | list[float], years: int | list[int],
 
 
 @typechecked
-def _generate_query(buffer_sizes: list[float], year: int, table_path: Path) -> Tuple[str, str, str]:
+def _generate_query(buffer_sizes: list[float], year: int, table_path: str) -> Tuple[str, str, str]:
     """
     [description]
     Build DuckDB SQL to compute road metrics (L, LL, LLW) within given buffers for `year`.
@@ -56,7 +56,7 @@ def _generate_query(buffer_sizes: list[float], year: int, table_path: Path) -> T
     [input]
     - buffer_sizes: list[float] — Buffer sizes to apply.
     - year: int — Target year (in `VALID_YEARS`).
-    - table_path: Path — Parquet table path for roads.
+    - table_path: str — Parquet table path for roads.
 
     [output]
     - tuple[str, str, str] — (pre_query, main_query, post_query).
@@ -142,7 +142,7 @@ class RoadLLWCalculator:
         buffer_sizes, years = _normalize_params(buffer_sizes, years)
         # generate request
         for year in years:
-            table_path = self.data_dir / f"{TABLE_NAME}.parquet"
+            table_path = f"{self.data_dir}/{TABLE_NAME}.parquet"
             pre_query, main_query, post_query = _generate_query(buffer_sizes, year, table_path)
             desc = f"Road LLW ({year}, {buffer_sizes})"
             self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)
