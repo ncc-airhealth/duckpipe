@@ -14,12 +14,12 @@
 - [x] Road Length Lane
 - [x] Road Length Lane Width (2020)
 - [ ] Car Registration
-- [ ] mr1 Length
-- [ ] mr1 Length Lane
-- [ ] mr1 Length Lane Width
-- [ ] mr2 Length
-- [ ] mr2 Length Lane
-- [ ] mr2 Length Lane Width
+- [x] mr1 Length
+- [x] mr1 Length Lane
+- [x] mr1 Length Lane Width
+- [x] mr2 Length
+- [x] mr2 Length Lane
+- [x] mr2 Length Lane Width
 - [ ] Hospital Count
 - [ ] Business Registration Count
 - [ ] Business Employee Count
