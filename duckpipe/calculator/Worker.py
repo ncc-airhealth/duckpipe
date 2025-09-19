@@ -130,11 +130,11 @@ class Worker:
         if isinstance(mode, str):
             mode = WorkerMode(mode)
         if mode == WorkerMode.CHUNKED_MULTI:
-            self._run_chunked_multi(pre_query, main_query, post_query, desc)
+            self._run_chunked_multi(pre_query, main_query, post_query, desc, self.connection_query)
         elif mode == WorkerMode.CHUNKED_SINGLE:
-            self._run_chunked_single(pre_query, main_query, post_query, desc)
+            self._run_chunked_single(pre_query, main_query, post_query, desc, self.connection_query)
         elif mode == WorkerMode.TOTAL_SINGLE:
-            self._run_total_single(pre_query, main_query, post_query, desc)
+            self._run_total_single(pre_query, main_query, post_query, desc, self.connection_query)
         else:
             raise ValueError(f"Invalid mode: {mode}")
         

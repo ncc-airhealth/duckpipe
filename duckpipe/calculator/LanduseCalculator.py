@@ -36,7 +36,7 @@ def _normalize_params(years: int | list[int], buffer_sizes: float | list[float] 
             raise ValueError(f"Invalid year '{year}'. Valid years are: {VALID_YEARS}")
     return years, buffer_sizes
 
-def _generate_query(year: int, table_path: Path, buffer_sizes: list[float]) -> Tuple[str, str, str]:
+def _generate_query(year: int, table_path: str, buffer_sizes: list[float]) -> Tuple[str, str, str]:
     # buffer size values clause
     values_clause = ", ".join(f"({bs})" for bs in buffer_sizes)
     max_buffer_size = max(buffer_sizes)
@@ -188,7 +188,7 @@ class LanduseCalculator:
         years, buffer_sizes = _normalize_params(years, buffer_sizes)
         # run per year
         for year in years:
-            table_path = (self.data_dir / f"landuse_{year}").with_suffix(".parquet")
+            table_path = f"{self.data_dir}/landuse_{year}.parquet"
             pre_query, main_query, post_query = _generate_query(year, table_path, buffer_sizes)
             desc = f"Landuse ({year}) (buffer_sizes: {buffer_sizes})"
             self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)

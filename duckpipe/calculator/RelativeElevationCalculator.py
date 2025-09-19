@@ -49,7 +49,7 @@ def _normalize_params(elevation_types: str | list[str], buffer_sizes: float | li
     return elevation_types, buffer_sizes
 
 
-def _generate_query(elevation_type: str, table_path: Path, buffer_sizes: list[float]) -> tuple[str, str, str]:
+def _generate_query(elevation_type: str, table_path: str, buffer_sizes: list[float]) -> tuple[str, str, str]:
     values_clause = ", ".join(f"({bs})" for bs in buffer_sizes)
     max_buffer_size = max(buffer_sizes)
     clip_distance = max_buffer_size + DONUT_THICKNESS + 2 * DEM_SPATIAL_RESOLUTION
@@ -179,7 +179,7 @@ class RelativeElevationCalculator:
         """
         elev_types, buffer_sizes = _normalize_params(elev_types, buffer_sizes)
         for elev_type in elev_types:
-            table_path = self.data_dir / f"{elev_type}.parquet"
+            table_path = f"{self.data_dir}/{elev_type}.parquet"
             pre_query, main_query, post_query = _generate_query(elev_type, table_path, buffer_sizes)
             desc = f"Relative elevation ({elev_type}) (buffer_sizes: {buffer_sizes})"
             self.run_query_workers(pre_query, main_query, post_query, mode=self.worker_mode, desc=desc)

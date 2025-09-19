@@ -32,7 +32,7 @@ def _normalize_params(years: int | list[int]) -> list[int]:
     # return
     return years
 
-def _generate_query(year: int, table_path: Path) -> Tuple[str, str, str]:
+def _generate_query(year: int, table_path: str) -> Tuple[str, str, str]:
     pre_query = VAR_NAME_MACRO
     main_query = f"""
         WITH 
@@ -74,7 +74,7 @@ class CoastlineDistanceCalculator:
         # normalize input
         years = _normalize_params(years)
         # run per-year
-        table_path = (self.data_dir / TABLE_NAME).with_suffix(".parquet")
+        table_path = f"{self.data_dir}/{TABLE_NAME}.parquet"
         for year in years:
             pre_query, main_query, post_query = _generate_query(year, table_path)
             desc = f"Coastline distance ({year})"
