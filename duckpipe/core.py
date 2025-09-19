@@ -63,6 +63,7 @@ class Calculator(CalculatorMixin):
         self.verbose = verbose
         install_duckdb_extensions()
         self.conn = generate_duckdb_memory_connection()
+        self.conn.execute(f"PRAGMA threads={n_workers}")
         self.start_time = datetime.now()
         self.connection_query = ""
     
