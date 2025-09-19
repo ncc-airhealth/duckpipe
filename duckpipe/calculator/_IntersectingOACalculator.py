@@ -74,11 +74,13 @@ def _generate_query(buffer_sizes, table_path: str) -> Tuple[str, str, str]:
                 cb.id, 
                 cb.buffer_size, 
                 ao.tot_reg_cd, 
-                COALESCE(ST_Area(ST_Intersection(cb.geometry, ao.geometry)) / ST_Area(cb.geometry), 0) AS intersection_ratio
+                COALESCE(ST_Area(ST_Intersection(cb.geometry, ao.geometry)) / ST_Area(ao.geometry), 0) AS intersection_ratio
             FROM 
                 chunk_buffer AS cb
             LEFT JOIN 
                 aoi_oa AS ao ON ST_Intersects(ao.geometry, cb.geometry)
+            ORDER BY
+                id, tot_reg_cd
         )
         SELECT * FROM chunk_buffer_oa;
     """
@@ -107,5 +109,4 @@ class IntersectingOACalculator:
         # done
         self.oa_intersection_df = self.result_df
         self.result_df = self.result_df_temp
-        raise Exception(self.oa_intersection_df)
         return self
