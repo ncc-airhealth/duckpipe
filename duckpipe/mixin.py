@@ -5,6 +5,7 @@ from duckpipe.calculator.CoastlineDistanceCalculator import CoastlineDistanceCal
 from duckpipe.calculator.CoordinateCalculator import CoordinateCalculator
 from duckpipe.calculator.LanduseCalculator import LanduseCalculator
 from duckpipe.calculator.MainRoadDistanceCalculator import MainRoadDistanceCalculator
+from duckpipe.calculator.MainRoadLLWCalculator import MainRoadLLWCalculator
 from duckpipe.calculator.MDLDistanceCalculator import MDLDistanceCalculator
 from duckpipe.calculator.PortDistanceCalculator import PortDistanceCalculator
 from duckpipe.calculator.RailstationDistanceCalculator import RailstationDistanceCalculator
@@ -23,6 +24,7 @@ class CalculatorMixin(
     CoordinateCalculator,
     LanduseCalculator,
     MainRoadDistanceCalculator,
+    MainRoadLLWCalculator, 
     MDLDistanceCalculator,
     PortDistanceCalculator,
     RailstationDistanceCalculator,
