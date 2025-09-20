@@ -15,6 +15,7 @@ from duckpipe.calculator.RoadDistanceCalculator import RoadDistanceCalculator
 from duckpipe.calculator.RoadLLWCalculator import RoadLLWCalculator
 from duckpipe.calculator.Worker import Worker
 from duckpipe.calculator._IntersectingOACalculator import IntersectingOACalculator
+from duckpipe.calculator.HouseYearCalculator import HouseYearCalculator
 
 
 class CalculatorMixin(
@@ -34,7 +35,8 @@ class CalculatorMixin(
     RoadDistanceCalculator,
     RoadLLWCalculator,
     Worker,
-    IntersectingOACalculator
+    IntersectingOACalculator,
+    HouseYearCalculator
 ):
     pass
 

@@ -9,7 +9,6 @@ from typing import Self, Tuple
 from pathlib import Path
 
 VALID_YEARS = [2000, 2005, 2010, 2015, 2020]
-VAR_PREFIX = "LS"
 VAR_NAME_MACRO = """
 CREATE OR REPLACE MACRO varname(lu_code, buffer_size, stat_type) AS (
     -- stat_type: a (area) or p (proportion)

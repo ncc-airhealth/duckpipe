@@ -17,6 +17,21 @@ def _normalize_params(buffer_sizes: float | list[float]) -> list[float]:
 
 @typechecked
 def _generate_query(buffer_sizes, table_path: str) -> Tuple[str, str, str]:
+    """
+    Generate DuckDB queries for intersecting OA ratio.
+    create 'oa_intersection_ratio' temp table with columns:
+    - id: int — Chunk ID.
+    - buffer_size: float — Buffer size.
+    - tot_reg_cd: int — OA code.
+    - intersection_ratio: float — Intersection ratio of OA and buffered chunk.
+
+    [input]
+    - buffer_sizes: list[float] — Buffer sizes.
+    - table_path: str — Path to OA table.
+
+    [output]
+    - Tuple[str, str, str] — Pre-query, main query, and post-query.
+    """
     # buffer size values clause
     values_clause = ", ".join(f"({bs})" for bs in buffer_sizes)
     max_buffer_size = max(buffer_sizes)
@@ -61,33 +76,37 @@ def _generate_query(buffer_sizes, table_path: str) -> Tuple[str, str, str]:
         ON aoi_oa 
         USING RTREE (geometry) WITH (max_node_capacity = 4);
         """, 
+        f"""
+        CREATE OR REPLACE TEMP TABLE oa_intersection_ratio AS (
+            WITH 
+            chunk_buffer AS (
+                SELECT c.id, bs.buffer_size, ST_Buffer(c.geometry, bs.buffer_size) AS geometry 
+                FROM chunk AS c
+                CROSS JOIN buffer_size AS bs
+            ), 
+            chunk_buffer_oa AS (
+                SELECT 
+                    cb.id, 
+                    cb.buffer_size, 
+                    ao.tot_reg_cd, 
+                    COALESCE(ST_Area(ST_Intersection(cb.geometry, ao.geometry)) / ST_Area(ao.geometry), 0) AS intersection_ratio
+                FROM 
+                    chunk_buffer AS cb
+                LEFT JOIN 
+                    aoi_oa AS ao ON ST_Intersects(ao.geometry, cb.geometry)
+                ORDER BY
+                    id, tot_reg_cd
+            )
+            SELECT * FROM chunk_buffer_oa
+        );
+        """
     ])
-    main_query = f"""
-        WITH 
-        chunk_buffer AS (
-            SELECT c.id, bs.buffer_size, ST_Buffer(c.geometry, bs.buffer_size) AS geometry 
-            FROM chunk AS c
-            CROSS JOIN buffer_size AS bs
-        ), 
-        chunk_buffer_oa AS (
-            SELECT 
-                cb.id, 
-                cb.buffer_size, 
-                ao.tot_reg_cd, 
-                COALESCE(ST_Area(ST_Intersection(cb.geometry, ao.geometry)) / ST_Area(ao.geometry), 0) AS intersection_ratio
-            FROM 
-                chunk_buffer AS cb
-            LEFT JOIN 
-                aoi_oa AS ao ON ST_Intersects(ao.geometry, cb.geometry)
-            ORDER BY
-                id, tot_reg_cd
-        )
-        SELECT * FROM chunk_buffer_oa;
-    """
+    main_query = "SELECT * FROM oa_intersection_ratio;"
     post_query = """
         DROP INDEX IF EXISTS rtree_aoi_oa;
         DROP TABLE IF EXISTS aoi_oa;
         DROP TABLE IF EXISTS buffer_size;
+        DROP TABLE IF EXISTS oa_intersection_ratio;
     """
     return pre_query, main_query, post_query
 
@@ -95,7 +114,7 @@ def _generate_query(buffer_sizes, table_path: str) -> Tuple[str, str, str]:
 class IntersectingOACalculator:
 
     @typechecked
-    def calculate_intersecting_oa(self, buffer_sizes: float | list[float]) -> Self:
+    def _calculate_intersecting_oa(self, buffer_sizes: float | list[float]) -> Self:
         # normalize input
         buffer_sizes = _normalize_params(buffer_sizes)
         # prepare
